@@ -37,19 +37,15 @@ Commit using the following format:
 
 git commit -m "feat: short description"
 
+Push commit to repo: 
+
 git push origin master
 
-Allowed commit types:
-- feat      (new feature)
-- fix       (bug fix)
-- refactor  (code cleanup or restructuring)
-- perf      (performance improvement)
-- docs      (documentation changes)
-- chore     (maintenance or configuration)
-
-Example commit:
+Example commit & Push:
 
 git commit -m "feat: add audio deepfake detection module"
+
+git push origin master
 
 --------------------------------------------------
 
