@@ -37,6 +37,8 @@ Commit using the following format:
 
 git commit -m "feat: short description"
 
+git push origin master
+
 Allowed commit types:
 - feat      (new feature)
 - fix       (bug fix)
