@@ -15,11 +15,15 @@ HOLY COMMANDMENTS:
 
 Before starting any work, always pull the latest changes:
 
-git pull origin main
+git branch
+
+git switch branch-name
+
+git pull origin branch-name
 
 All development must be done on a dedicated branch
 
-NEVER PUSH TO MAIN
+NEVER PUSH TO MAIN BRANCH 
 
 --------------------------------------------------
 
