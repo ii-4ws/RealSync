@@ -17,12 +17,9 @@ Before starting any work, always pull the latest changes:
 
 git pull origin main
 
-All development must be done on a feature branch:
+All development must be done on a dedicated branch
 
-feature/<short-name>
-
-Example:
-feature/audio-detection
+NEVER PUSH TO MAIN
 
 --------------------------------------------------
 
