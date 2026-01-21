@@ -37,15 +37,19 @@ Commit using the following format:
 
 git commit -m "feat: short description"
 
-Push commit to repo: 
+Create a new branch:
 
-git push origin master
+git checkout -b branch-name
+
+Push commit to branch: 
+
+git push origin branch-name
 
 Example commit & Push:
 
 git commit -m "feat: add audio deepfake detection module"
 
-git push origin master
+git push origin branch-name
 
 --------------------------------------------------
 
