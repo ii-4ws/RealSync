@@ -12,8 +12,10 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
+import { buildApiUrl } from '../../lib/api';
 
 type Screen = 'login' | 'dashboard' | 'sessions' | 'reports' | 'settings' | 'faq';
+type MeetingType = 'official' | 'business' | 'friends';
 
 interface SessionsScreenProps {
   onNavigate: (screen: 'login' | 'dashboard' | 'sessions' | 'reports' | 'settings' | 'faq') => void;
@@ -21,43 +23,48 @@ interface SessionsScreenProps {
   profilePhoto?: string | null;
   userName?: string;
   userEmail?: string;
+  onStartSession?: (sessionId: string, title: string, meetingType: MeetingType) => void;
 }
 
-export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, userEmail }: SessionsScreenProps) {
+export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, userEmail, onStartSession }: SessionsScreenProps) {
   const [isNewSessionOpen, setIsNewSessionOpen] = useState(false);
-  const [sessionType, setSessionType] = useState<'instant' | 'scheduled'>('instant');
   const [meetingName, setMeetingName] = useState('');
-  const [meetingId, setMeetingId] = useState('');
-  const [meetingLink, setMeetingLink] = useState('');
-  const [meetingPassword, setMeetingPassword] = useState('');
-  const [meetingDate, setMeetingDate] = useState('');
-  const [meetingTime, setMeetingTime] = useState('');
+  const [meetingType, setMeetingType] = useState<MeetingType>('business');
+  const [creating, setCreating] = useState(false);
 
-  const handleCreateSession = () => {
-    if (!meetingName || !meetingId || !meetingLink) {
-      toast.error('Please fill in all required fields');
+  const handleCreateSession = async () => {
+    if (!meetingName.trim()) {
+      toast.error('Please enter a meeting title');
       return;
     }
 
-    if (sessionType === 'scheduled' && (!meetingDate || !meetingTime)) {
-      toast.error('Please select date and time for scheduled session');
-      return;
-    }
+    setCreating(true);
+    try {
+      const response = await fetch(buildApiUrl('/api/sessions'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: meetingName.trim(), meetingType }),
+      });
 
-    if (sessionType === 'instant') {
-      toast.success('Joining session...');
-    } else {
-      toast.success('Session scheduled successfully');
-    }
+      if (!response.ok) {
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.error || 'Failed to create session');
+      }
 
-    // Reset form
-    setMeetingName('');
-    setMeetingId('');
-    setMeetingLink('');
-    setMeetingPassword('');
-    setMeetingDate('');
-    setMeetingTime('');
-    setIsNewSessionOpen(false);
+      const data = (await response.json()) as { sessionId: string };
+      toast.success('Session started');
+
+      onStartSession?.(data.sessionId, meetingName.trim(), meetingType);
+
+      // Reset form
+      setMeetingName('');
+      setMeetingType('business');
+      setIsNewSessionOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create session');
+    } finally {
+      setCreating(false);
+    }
   };
 
   const stats = [
@@ -266,26 +273,11 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
             <DialogHeader>
               <DialogTitle className="text-white text-xl">Create New Session</DialogTitle>
               <DialogDescription className="text-gray-400 text-sm">
-                Create a new session either instantly or schedule it for later.
+                Start a live session to stream transcript + trust signals in real time.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label className="text-gray-400 text-sm">Session Type</Label>
-                <Select value={sessionType} onValueChange={setSessionType}>
-                  <SelectTrigger className="bg-[#1a1a2e] border border-gray-800 text-gray-400">
-                    <SelectValue>
-                      {sessionType === 'instant' ? 'Instant' : 'Scheduled'}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#1a1a2e] border border-gray-800 text-gray-400">
-                    <SelectItem value="instant">Instant</SelectItem>
-                    <SelectItem value="scheduled">Scheduled</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
               <div className="space-y-2">
                 <Label className="text-gray-400 text-sm">Meeting Name</Label>
                 <Input
@@ -297,66 +289,27 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
               </div>
 
               <div className="space-y-2">
-                <Label className="text-gray-400 text-sm">Meeting ID</Label>
-                <Input
-                  type="text"
-                  value={meetingId}
-                  onChange={(e) => setMeetingId(e.target.value)}
-                  className="bg-[#1a1a2e] border border-gray-800 text-gray-400"
-                />
+                <Label className="text-gray-400 text-sm">Meeting Type</Label>
+                <Select value={meetingType} onValueChange={(value) => setMeetingType(value as MeetingType)}>
+                  <SelectTrigger className="bg-[#1a1a2e] border border-gray-800 text-gray-400">
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1a1a2e] border border-gray-800 text-gray-400">
+                    <SelectItem value="official">Official</SelectItem>
+                    <SelectItem value="business">Business</SelectItem>
+                    <SelectItem value="friends">Friends</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-
-              <div className="space-y-2">
-                <Label className="text-gray-400 text-sm">Meeting Link</Label>
-                <Input
-                  type="text"
-                  value={meetingLink}
-                  onChange={(e) => setMeetingLink(e.target.value)}
-                  className="bg-[#1a1a2e] border border-gray-800 text-gray-400"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-gray-400 text-sm">Meeting Password</Label>
-                <Input
-                  type="password"
-                  value={meetingPassword}
-                  onChange={(e) => setMeetingPassword(e.target.value)}
-                  className="bg-[#1a1a2e] border border-gray-800 text-gray-400"
-                />
-              </div>
-
-              {sessionType === 'scheduled' && (
-                <>
-                  <div className="space-y-2">
-                    <Label className="text-gray-400 text-sm">Date</Label>
-                    <Input
-                      type="date"
-                      value={meetingDate}
-                      onChange={(e) => setMeetingDate(e.target.value)}
-                      className="bg-[#1a1a2e] border border-gray-800 text-gray-400"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-gray-400 text-sm">Time</Label>
-                    <Input
-                      type="time"
-                      value={meetingTime}
-                      onChange={(e) => setMeetingTime(e.target.value)}
-                      className="bg-[#1a1a2e] border border-gray-800 text-gray-400"
-                    />
-                  </div>
-                </>
-              )}
             </div>
 
             <div className="flex justify-end mt-4">
               <Button
                 className="bg-cyan-400 hover:bg-cyan-500 text-black"
                 onClick={handleCreateSession}
+                disabled={creating}
               >
-                Create Session
+                {creating ? 'Starting...' : 'Start Session'}
               </Button>
             </div>
           </DialogContent>

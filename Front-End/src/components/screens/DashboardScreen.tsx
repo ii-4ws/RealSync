@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sidebar } from '../layout/Sidebar';
 import { TopBar } from '../layout/TopBar';
 import { AlertTriangle, AlertCircle } from 'lucide-react';
 import { buildApiUrl, buildWsUrl } from '../../lib/api';
+import { Button } from '../ui/button';
+import { startMicPcm16Stream, type MicPcmStreamHandle } from '../../lib/audioPcm';
 
 interface DashboardScreenProps {
   onNavigate: (screen: 'login' | 'dashboard' | 'sessions' | 'reports' | 'settings' | 'faq') => void;
@@ -10,10 +12,28 @@ interface DashboardScreenProps {
   profilePhoto?: string | null;
   userName?: string;
   userEmail?: string;
+  sessionId?: string | null;
+  meetingTitle?: string | null;
+  meetingType?: MeetingType | null;
 }
 
 type EmotionLabel = 'Happy' | 'Neutral' | 'Angry' | 'Fear' | 'Surprise' | 'Sad';
 type RiskLevel = 'low' | 'medium' | 'high';
+type MeetingType = 'official' | 'business' | 'friends';
+
+type TranscriptEvent = {
+  text: string;
+  isFinal: boolean;
+  confidence: number | null;
+  ts: string;
+};
+
+type SuggestionEvent = {
+  severity: RiskLevel;
+  title: string;
+  message: string;
+  ts: string;
+};
 
 type Metrics = {
   timestamp: string;
@@ -82,19 +102,117 @@ const getRiskColor = (risk: RiskLevel) => {
   return 'text-green-400';
 };
 
-export function DashboardScreen({ onNavigate, onSignOut, profilePhoto, userName, userEmail }: DashboardScreenProps) {
+export function DashboardScreen({
+  onNavigate,
+  onSignOut,
+  profilePhoto,
+  userName,
+  userEmail,
+  sessionId,
+  meetingTitle,
+  meetingType,
+}: DashboardScreenProps) {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [metricsError, setMetricsError] = useState<string | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
+  const [transcriptLines, setTranscriptLines] = useState<TranscriptEvent[]>([]);
+  const [transcriptInterim, setTranscriptInterim] = useState<string>('');
+  const [suggestions, setSuggestions] = useState<SuggestionEvent[]>([]);
+  const [captionsActive, setCaptionsActive] = useState(false);
+  const [captionsError, setCaptionsError] = useState<string | null>(null);
+
+  const ingestWsRef = useRef<WebSocket | null>(null);
+  const micRef = useRef<MicPcmStreamHandle | null>(null);
+
+  const stopCaptions = () => {
+    micRef.current?.stop();
+    micRef.current = null;
+
+    if (ingestWsRef.current?.readyState === WebSocket.OPEN && sessionId) {
+      ingestWsRef.current.send(JSON.stringify({ type: 'stop', sessionId }));
+    }
+
+    ingestWsRef.current?.close();
+    ingestWsRef.current = null;
+    setCaptionsActive(false);
+  };
+
+  const startCaptions = async () => {
+    if (captionsActive) return;
+    if (!sessionId) {
+      setCaptionsError('Start a session first (Sessions → New Session).');
+      return;
+    }
+
+    setCaptionsError(null);
+
+    const ingestWs = new WebSocket(buildWsUrl(`/ws/ingest?sessionId=${encodeURIComponent(sessionId)}`));
+    ingestWsRef.current = ingestWs;
+
+    ingestWs.onopen = async () => {
+      ingestWs.send(
+        JSON.stringify({
+          type: 'start',
+          sessionId,
+          meetingType: meetingType ?? 'business',
+        })
+      );
+
+      try {
+        micRef.current = await startMicPcm16Stream({
+          onChunkB64: (dataB64) => {
+            if (ingestWs.readyState !== WebSocket.OPEN) return;
+            ingestWs.send(
+              JSON.stringify({
+                type: 'audio_pcm',
+                sampleRate: 16000,
+                channels: 1,
+                dataB64,
+              })
+            );
+          },
+          onError: () => {
+            setCaptionsError('Microphone capture failed.');
+          },
+        });
+        setCaptionsActive(true);
+      } catch (err) {
+        setCaptionsError('Microphone permission denied.');
+        ingestWs.close();
+      }
+    };
+
+    ingestWs.onclose = () => {
+      micRef.current?.stop();
+      micRef.current = null;
+      ingestWsRef.current = null;
+      setCaptionsActive(false);
+    };
+
+    ingestWs.onerror = () => {
+      setCaptionsError('Audio connection failed.');
+      stopCaptions();
+    };
+  };
 
   useEffect(() => {
     let isActive = true;
     let ws: WebSocket | null = null;
     let pollingInterval: number | null = null;
 
+    // Reset per-session UI state when the active session changes.
+    setTranscriptLines([]);
+    setTranscriptInterim('');
+    setSuggestions([]);
+    setCaptionsError(null);
+    stopCaptions();
+
+    const metricsPath = sessionId ? `/api/sessions/${sessionId}/metrics` : '/api/metrics';
+    const subscribePath = sessionId ? `/ws?sessionId=${encodeURIComponent(sessionId)}` : '/ws';
+
     const fetchMetrics = async () => {
       try {
-        const response = await fetch(buildApiUrl('/api/metrics'));
+        const response = await fetch(buildApiUrl(metricsPath));
         if (!response.ok) {
           throw new Error('Failed to fetch metrics');
         }
@@ -125,7 +243,7 @@ export function DashboardScreen({ onNavigate, onSignOut, profilePhoto, userName,
 
     const connectWebSocket = () => {
       try {
-        ws = new WebSocket(buildWsUrl('/ws'));
+        ws = new WebSocket(buildWsUrl(subscribePath));
       } catch (error) {
         startPolling();
         return;
@@ -142,6 +260,42 @@ export function DashboardScreen({ onNavigate, onSignOut, profilePhoto, userName,
         if (!isActive) return;
         try {
           const message = JSON.parse(event.data);
+
+          if (message?.type === 'metrics' && message?.data?.emotion) {
+            setMetrics(message.data as Metrics);
+            setMetricsError(null);
+            return;
+          }
+
+          if (message?.type === 'transcript' && typeof message?.text === 'string') {
+            const transcriptEvent: TranscriptEvent = {
+              text: message.text,
+              isFinal: Boolean(message.isFinal),
+              confidence: typeof message.confidence === 'number' ? message.confidence : null,
+              ts: typeof message.ts === 'string' ? message.ts : new Date().toISOString(),
+            };
+
+            if (transcriptEvent.isFinal) {
+              setTranscriptLines((prev) => [...prev, transcriptEvent].slice(-50));
+              setTranscriptInterim('');
+            } else {
+              setTranscriptInterim(transcriptEvent.text);
+            }
+            return;
+          }
+
+          if (message?.type === 'suggestion' && typeof message?.title === 'string') {
+            const suggestionEvent: SuggestionEvent = {
+              severity: message.severity as RiskLevel,
+              title: message.title,
+              message: String(message.message || ''),
+              ts: typeof message.ts === 'string' ? message.ts : new Date().toISOString(),
+            };
+            setSuggestions((prev) => [suggestionEvent, ...prev].slice(0, 25));
+            return;
+          }
+
+          // Backwards compatibility: older server may send the metrics object directly.
           const payload = message?.data ?? message;
           if (payload?.emotion) {
             setMetrics(payload as Metrics);
@@ -173,8 +327,9 @@ export function DashboardScreen({ onNavigate, onSignOut, profilePhoto, userName,
       isActive = false;
       stopPolling();
       ws?.close();
+      stopCaptions();
     };
-  }, []);
+  }, [sessionId]);
 
   const displayMetrics = metrics ?? fallbackMetrics;
   const trustScorePercent = toPercent(displayMetrics.trustScore);
@@ -195,6 +350,15 @@ export function DashboardScreen({ onNavigate, onSignOut, profilePhoto, userName,
 
   const alerts = useMemo(() => {
     const items: Array<{ type: 'error' | 'warning' | 'ok'; message: string; time: string }> = [];
+
+    // Prioritize explicit recommendations coming from transcript + risk signals.
+    suggestions.slice(0, 3).forEach((suggestion) => {
+      items.push({
+        type: suggestion.severity === 'high' ? 'error' : 'warning',
+        message: `${suggestion.title}: ${suggestion.message}`,
+        time: new Date(suggestion.ts).toLocaleTimeString(),
+      });
+    });
 
     if (displayMetrics.deepfake.riskLevel !== 'low') {
       items.push({
@@ -229,7 +393,7 @@ export function DashboardScreen({ onNavigate, onSignOut, profilePhoto, userName,
     }
 
     return items;
-  }, [displayMetrics]);
+  }, [displayMetrics, suggestions]);
 
   const confidenceScores = [
     { label: 'Audio', value: toPercent(displayMetrics.confidenceLayers.audio), color: 'bg-cyan-400' },
@@ -310,22 +474,24 @@ export function DashboardScreen({ onNavigate, onSignOut, profilePhoto, userName,
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Title:</span>
-                  <span className="text-white">Q3 Financial Review</span>
+                  <span className="text-white">{meetingTitle ?? 'No active session'}</span>
                 </div>
-                
+
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400">Duration:</span>
-                  <span className="text-white">00:42:15</span>
+                  <span className="text-gray-400">Meeting Type:</span>
+                  <span className="text-white">{meetingType ?? '--'}</span>
                 </div>
-                
+
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400">Participants:</span>
-                  <span className="text-white">12</span>
+                  <span className="text-gray-400">Session ID:</span>
+                  <span className="text-white">{sessionId ? sessionId.slice(0, 8) : '--'}</span>
                 </div>
-                
+
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400">Average Trust Score:</span>
-                  <span className="text-cyan-400">96%</span>
+                  <span className="text-gray-400">Live Captions:</span>
+                  <span className={captionsActive ? 'text-green-400' : 'text-gray-300'}>
+                    {captionsActive ? 'On' : 'Off'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -433,6 +599,73 @@ export function DashboardScreen({ onNavigate, onSignOut, profilePhoto, userName,
                   className={`h-full ${displayMetrics.deepfake.riskLevel === 'high' ? 'bg-red-400' : displayMetrics.deepfake.riskLevel === 'medium' ? 'bg-yellow-400' : 'bg-cyan-400'}`}
                   style={{ width: `${toPercent(displayMetrics.deepfake.authenticityScore)}%` }}
                 ></div>
+              </div>
+            </div>
+
+            {/* Live Transcript */}
+            <div className="col-span-2 bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-white text-lg">Live Transcript</h3>
+                <div className="flex items-center gap-2">
+                  {captionsActive ? (
+                    <Button
+                      variant="outline"
+                      className="bg-transparent border-gray-700 text-gray-200 hover:bg-[#2a2a3e]"
+                      onClick={stopCaptions}
+                    >
+                      Stop Captions
+                    </Button>
+                  ) : (
+                    <Button className="bg-cyan-400 hover:bg-cyan-500 text-black" onClick={startCaptions}>
+                      Start Captions
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <p className="text-gray-400 text-sm">
+                Instant captions (interim + final). {sessionId ? 'Streaming from mic.' : 'Create a session to enable.'}
+              </p>
+              {captionsError && <p className="text-red-400 text-xs mt-2">{captionsError}</p>}
+
+              <div className="mt-4 h-48 overflow-y-auto rounded-lg border border-gray-800 bg-[#141427] p-4">
+                {transcriptLines.length === 0 && !transcriptInterim ? (
+                  <p className="text-gray-500 text-sm">No transcript yet. Start captions and speak into your mic.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {transcriptLines.map((line, index) => (
+                      <div key={`${line.ts}-${index}`} className="text-gray-200 text-sm">
+                        <span className="text-gray-500 mr-2">{new Date(line.ts).toLocaleTimeString()}</span>
+                        <span>{line.text}</span>
+                      </div>
+                    ))}
+                    {transcriptInterim ? (
+                      <div className="text-gray-400 text-sm italic">{transcriptInterim}</div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Recommendations */}
+            <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
+              <h3 className="text-white text-lg mb-3">Recommendations</h3>
+              <p className="text-gray-400 text-sm mb-4">Rules-first suggestions based on transcript + risk signals.</p>
+
+              <div className="space-y-3">
+                {suggestions.length === 0 ? (
+                  <p className="text-gray-500 text-sm">No recommendations yet.</p>
+                ) : (
+                  suggestions.slice(0, 5).map((suggestion, index) => (
+                    <div key={`${suggestion.ts}-${index}`} className="rounded-lg border border-gray-800 bg-[#141427] p-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-gray-200 text-sm font-medium">{suggestion.title}</p>
+                        <span className={`text-xs ${getRiskColor(suggestion.severity)}`}>{suggestion.severity}</span>
+                      </div>
+                      <p className="text-gray-400 text-xs mt-1">{suggestion.message}</p>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 

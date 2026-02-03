@@ -10,6 +10,7 @@ import { FAQScreen } from './components/screens/FAQScreen';
 import { supabase } from './lib/supabaseClient';
 
 type Screen = 'login' | 'dashboard' | 'sessions' | 'reports' | 'settings' | 'faq';
+type MeetingType = 'official' | 'business' | 'friends';
 
 type Profile = {
   id: string;
@@ -30,13 +31,22 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
-  const [prototypeMode] = useState(true); // Enable prototype mode to skip auth
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeMeetingTitle, setActiveMeetingTitle] = useState<string | null>(null);
+  const [activeMeetingType, setActiveMeetingType] = useState<MeetingType | null>(null);
 
-  console.log('Current state:', { currentScreen, prototypeMode, loadingAuth, loadingProfile });
+  // Final release behavior: real auth by default. If Supabase env vars are missing (common in local dev),
+  // fall back to prototype mode so the UI can still render.
+  const prototypeModeEnabled =
+    import.meta.env.VITE_PROTOTYPE_MODE === '1' ||
+    !import.meta.env.VITE_SUPABASE_URL ||
+    !import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  console.log('Current state:', { currentScreen, prototypeMode: prototypeModeEnabled, loadingAuth, loadingProfile });
 
   useEffect(() => {
     // Skip authentication in prototype mode
-    if (prototypeMode) {
+    if (prototypeModeEnabled) {
       return;
     }
 
@@ -75,11 +85,11 @@ export default function App() {
       isMounted = false;
       subscription.unsubscribe();
     };
-  }, [prototypeMode]);
+  }, [prototypeModeEnabled]);
 
   useEffect(() => {
     // Skip profile fetching in prototype mode
-    if (prototypeMode) {
+    if (prototypeModeEnabled) {
       return;
     }
 
@@ -131,7 +141,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [session?.user?.id, prototypeMode]);
+  }, [session?.user?.id, prototypeModeEnabled]);
 
   useEffect(() => {
     setUserEmail(session?.user?.email ?? undefined);
@@ -170,12 +180,12 @@ export default function App() {
   }
 
   // In prototype mode, skip authentication
-  if (!prototypeMode && !session) {
+  if (!prototypeModeEnabled && !session) {
     console.log('Showing login screen');
     return <LoginScreen />;
   }
 
-  if (!prototypeMode && needsOnboarding) {
+  if (!prototypeModeEnabled && needsOnboarding) {
     console.log('Showing onboarding');
     return (
       <CompleteProfileScreen
@@ -188,10 +198,37 @@ export default function App() {
 
   console.log('Rendering main app, screen:', currentScreen);
 
+  const handleStartSession = (sessionId: string, title: string, meetingType: MeetingType) => {
+    setActiveSessionId(sessionId);
+    setActiveMeetingTitle(title);
+    setActiveMeetingType(meetingType);
+    setCurrentScreen('dashboard');
+  };
+
   return (
     <>
-      {currentScreen === 'dashboard' && <DashboardScreen onNavigate={navigateTo} onSignOut={handleSignOut} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />}
-      {currentScreen === 'sessions' && <SessionsScreen onNavigate={navigateTo} onSignOut={handleSignOut} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />}
+      {currentScreen === 'dashboard' && (
+        <DashboardScreen
+          onNavigate={navigateTo}
+          onSignOut={handleSignOut}
+          profilePhoto={profilePhoto}
+          userName={userName}
+          userEmail={userEmail}
+          sessionId={activeSessionId}
+          meetingTitle={activeMeetingTitle}
+          meetingType={activeMeetingType}
+        />
+      )}
+      {currentScreen === 'sessions' && (
+        <SessionsScreen
+          onNavigate={navigateTo}
+          onSignOut={handleSignOut}
+          profilePhoto={profilePhoto}
+          userName={userName}
+          userEmail={userEmail}
+          onStartSession={handleStartSession}
+        />
+      )}
       {currentScreen === 'reports' && <ReportsScreen onNavigate={navigateTo} onSignOut={handleSignOut} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />}
       {currentScreen === 'settings' && <SettingsScreen onNavigate={navigateTo} onSignOut={handleSignOut} profilePhoto={profilePhoto} onSaveProfilePhoto={setProfilePhoto} userName={userName} onSaveUserName={setUserName} userEmail={userEmail} onSaveUserEmail={setUserEmail} />}
       {currentScreen === 'faq' && <FAQScreen onNavigate={navigateTo} onSignOut={handleSignOut} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />}
