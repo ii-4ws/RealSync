@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
+import { Toaster } from 'sonner';
 import { LoginScreen } from './components/screens/LoginScreen';
+import { SignUpScreen } from './components/screens/SignUpScreen';
 import { CompleteProfileScreen } from './components/screens/CompleteProfileScreen';
 import { DashboardScreen } from './components/screens/DashboardScreen';
 import { SessionsScreen } from './components/screens/SessionsScreen';
@@ -8,6 +10,7 @@ import { ReportsScreen } from './components/screens/ReportsScreen';
 import { SettingsScreen } from './components/screens/SettingsScreen';
 import { FAQScreen } from './components/screens/FAQScreen';
 import { supabase } from './lib/supabaseClient';
+import { isBlockedDomain } from './lib/blockedDomains';
 
 type Screen = 'login' | 'dashboard' | 'sessions' | 'reports' | 'settings' | 'faq';
 type MeetingType = 'official' | 'business' | 'friends';
@@ -15,6 +18,7 @@ type MeetingType = 'official' | 'business' | 'friends';
 type Profile = {
   id: string;
   username: string | null;
+  full_name: string | null;
   avatar_url: string | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -24,16 +28,20 @@ export default function App() {
   console.log('App component mounted');
 
   const [currentScreen, setCurrentScreen] = useState<Screen>('dashboard');
+  const [authView, setAuthView] = useState<'login' | 'signup'>('login');
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [userName, setUserName] = useState<string | undefined>('Demo User');
   const [userEmail, setUserEmail] = useState<string | undefined>('demo@realsync.com');
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [loadingAuth, setLoadingAuth] = useState(false);
+  const [loadingAuth, setLoadingAuth] = useState(true);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeMeetingTitle, setActiveMeetingTitle] = useState<string | null>(null);
   const [activeMeetingType, setActiveMeetingType] = useState<MeetingType | null>(null);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+  const [botConnecting, setBotConnecting] = useState(false);
+  const [connectingTitle, setConnectingTitle] = useState<string>('');
 
   // Final release behavior: real auth by default. If Supabase env vars are missing (common in local dev),
   // fall back to prototype mode so the UI can still render.
@@ -47,6 +55,7 @@ export default function App() {
   useEffect(() => {
     // Skip authentication in prototype mode
     if (prototypeModeEnabled) {
+      setLoadingAuth(false);
       return;
     }
 
@@ -72,6 +81,19 @@ export default function App() {
     initializeSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      // ── OAuth domain guard ──────────────────────────────────────
+      // Block personal email domains (gmail, yahoo, etc.) even when
+      // the user authenticates via Google/Microsoft OAuth.
+      if (event === 'SIGNED_IN' && nextSession?.user?.email) {
+        if (isBlockedDomain(nextSession.user.email)) {
+          supabase.auth.signOut();
+          setOauthError(
+            'Personal email providers (Gmail, Yahoo, Outlook, etc.) are not accepted. Please sign in with your corporate or institutional email.'
+          );
+          return;
+        }
+      }
+
       setSession(nextSession ?? null);
       if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'INITIAL_SESSION') {
         setLoadingProfile(!!nextSession?.user?.id);
@@ -107,7 +129,7 @@ export default function App() {
       try {
         const { data, error, status } = await supabase
           .from('profiles')
-          .select('id, username, avatar_url, created_at, updated_at')
+          .select('id, username, full_name, avatar_url, created_at, updated_at')
           .eq('id', userId)
           .single();
 
@@ -148,7 +170,7 @@ export default function App() {
   }, [session?.user?.email]);
 
   useEffect(() => {
-    setUserName(profile?.username ?? undefined);
+    setUserName(profile?.full_name ?? profile?.username ?? undefined);
     setProfilePhoto(profile?.avatar_url ?? null);
   }, [profile]);
 
@@ -181,8 +203,12 @@ export default function App() {
 
   // In prototype mode, skip authentication
   if (!prototypeModeEnabled && !session) {
+    if (authView === 'signup') {
+      console.log('Showing signup screen');
+      return <SignUpScreen onSwitchToLogin={() => setAuthView('login')} />;
+    }
     console.log('Showing login screen');
-    return <LoginScreen />;
+    return <LoginScreen onSwitchToSignUp={() => setAuthView('signup')} oauthError={oauthError} onClearOAuthError={() => setOauthError(null)} />;
   }
 
   if (!prototypeModeEnabled && needsOnboarding) {
@@ -198,19 +224,95 @@ export default function App() {
 
   console.log('Rendering main app, screen:', currentScreen);
 
+  // Auto-dismiss the connecting screen after 15s if bot never reports connected
+  useEffect(() => {
+    if (!botConnecting) return;
+    const timer = setTimeout(() => setBotConnecting(false), 15000);
+    return () => clearTimeout(timer);
+  }, [botConnecting]);
+
   const handleStartSession = (sessionId: string, title: string, meetingType: MeetingType) => {
     setActiveSessionId(sessionId);
     setActiveMeetingTitle(title);
     setActiveMeetingType(meetingType);
+    setConnectingTitle(title);
+    setBotConnecting(true);
     setCurrentScreen('dashboard');
+  };
+
+  const handleEndSession = () => {
+    setActiveSessionId(null);
+    setActiveMeetingTitle(null);
+    setActiveMeetingType(null);
   };
 
   return (
     <>
+      <Toaster position="top-right" theme="dark" richColors />
+
+      {/* Bot Connecting Loading Screen */}
+      {botConnecting && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0a0a14]/95 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-6 max-w-md text-center px-6">
+            {/* Animated eye logo */}
+            <div className="relative">
+              <div className="w-24 h-24 rounded-full border-2 border-cyan-400/30 flex items-center justify-center">
+                <div className="w-20 h-20 rounded-full border-2 border-transparent border-t-cyan-400 border-r-cyan-400 animate-spin" />
+              </div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <svg className="w-10 h-10 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </div>
+            </div>
+
+            {/* Status text */}
+            <div>
+              <h2 className="text-white text-xl font-semibold mb-2">Connecting to Meeting</h2>
+              <p className="text-gray-400 text-sm mb-1">{connectingTitle}</p>
+              <p className="text-gray-500 text-xs">
+                The RealSync bot is joining your Zoom meeting.
+                <br />
+                This may take a few seconds…
+              </p>
+            </div>
+
+            {/* Animated progress dots */}
+            <div className="flex items-center gap-4 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                <span className="text-gray-400">Creating session</span>
+              </div>
+              <div className="w-6 h-px bg-gray-700" />
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-cyan-400/50 animate-pulse [animation-delay:0.5s]" />
+                <span className="text-gray-500">Bot joining</span>
+              </div>
+              <div className="w-6 h-px bg-gray-700" />
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-gray-600" />
+                <span className="text-gray-600">Streaming</span>
+              </div>
+            </div>
+
+            {/* Skip button */}
+            <button
+              onClick={() => setBotConnecting(false)}
+              className="mt-4 text-gray-500 text-xs hover:text-gray-300 transition-colors underline underline-offset-2"
+            >
+              Skip to Dashboard
+            </button>
+          </div>
+        </div>
+      )}
+
       {currentScreen === 'dashboard' && (
         <DashboardScreen
           onNavigate={navigateTo}
           onSignOut={handleSignOut}
+          onEndSession={handleEndSession}
+          onBotConnected={() => setBotConnecting(false)}
           profilePhoto={profilePhoto}
           userName={userName}
           userEmail={userEmail}

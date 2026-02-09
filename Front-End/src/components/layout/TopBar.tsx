@@ -12,10 +12,14 @@ interface TopBarProps {
 }
 
 export function TopBar({ title, onSignOut, onNavigate, profilePhoto, userName, userEmail }: TopBarProps) {
+  const initials = userName
+    ? userName.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
+    : '??';
+
   return (
     <div className="h-20 bg-[#1a1a2e] border-b border-gray-800 px-8 flex items-center justify-between">
       <h1 className="text-white text-2xl">{title}</h1>
-      
+
       <div className="flex items-center gap-4">
         {/* System Status */}
         <div className="flex items-center gap-2 px-4 py-2 bg-[#2a2a3e] rounded-lg">
@@ -31,7 +35,7 @@ export function TopBar({ title, onSignOut, onNavigate, profilePhoto, userName, u
                 <img src={profilePhoto} alt="Profile" className="w-full h-full rounded-full object-cover" />
               ) : (
                 <AvatarFallback className="bg-gradient-to-br from-cyan-400 to-blue-500 text-white">
-                  JD
+                  {initials}
                 </AvatarFallback>
               )}
             </Avatar>
@@ -39,8 +43,8 @@ export function TopBar({ title, onSignOut, onNavigate, profilePhoto, userName, u
           <DropdownMenuContent className="bg-[#1a1a2e] border border-gray-800 w-64" align="end">
             <DropdownMenuLabel className="text-gray-400 px-4 py-2">
               <div className="flex flex-col gap-1">
-                <p className="text-white">{userName || 'John Doe'}</p>
-                <p className="text-sm text-gray-400">{userEmail || 'john.doe@realsync.ai'}</p>
+                <p className="text-white">{userName || 'User'}</p>
+                <p className="text-sm text-gray-400">{userEmail || ''}</p>
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator className="bg-gray-800" />

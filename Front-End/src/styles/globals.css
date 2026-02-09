@@ -39,6 +39,47 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* RealSync Brand Design Tokens */
+  --rs-bg-deep:      #0A0A14;
+  --rs-bg-base:      #0F0F1E;
+  --rs-bg-recessed:  #141427;
+  --rs-bg-card:      #1A1A2E;
+  --rs-bg-elevated:  #2A2A3E;
+  --rs-bg-hover:     #3A3A4E;
+
+  --rs-cyan:         #22D3EE;
+  --rs-cyan-hover:   #06B6D4;
+  --rs-blue:         #3B82F6;
+  --rs-blue-active:  #2563EB;
+
+  --rs-purple:       #A855F7;
+  --rs-purple-deep:  #6D28D9;
+  --rs-orange:       #FB923C;
+  --rs-orange-dark:  #F97316;
+
+  --rs-severity-low:      #4ADE80;
+  --rs-severity-medium:   #FACC15;
+  --rs-severity-high:     #FB923C;
+  --rs-severity-critical: #F87171;
+  --rs-info:              #60A5FA;
+
+  --rs-border-default:  #1F2937;
+  --rs-border-input:    #374151;
+  --rs-border-subtle:   #4B5563;
+
+  --rs-radius-sm:   8px;
+  --rs-radius-md:   12px;
+  --rs-radius-lg:   16px;
+  --rs-radius-full: 9999px;
+
+  --rs-font-sans:  'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --rs-font-mono:  'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --rs-gradient-primary: linear-gradient(to right, #22D3EE, #3B82F6);
+  --rs-gradient-hover:   linear-gradient(to right, #06B6D4, #2563EB);
+  --rs-gradient-accent:  linear-gradient(to right, #6D28D9, #3B82F6, #22D3EE);
+  --rs-gradient-divider: linear-gradient(to right, transparent, #374151, transparent);
 }
 
 .dark {
@@ -117,6 +158,10 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Brand fonts */
+  --font-sans: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 @layer base {
@@ -205,4 +250,26 @@ html {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #3a3a4e;
+}
+
+/* Brand animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html><head><style>body{margin:0;overflow:hidden;background:#000}canvas{display:block}</style></head>
+<body>
+<canvas id="c" width="640" height="480"></canvas>
+<script>
+var c = document.getElementById("c");
+var ctx = c.getContext("2d");
+var W = 640, H = 480, cx = W / 2;
+
+// BG gradient
+var bg = ctx.createLinearGradient(0, 0, W, H);
+bg.addColorStop(0, "#1a0a2e");
+bg.addColorStop(0.25, "#16133a");
+bg.addColorStop(0.5, "#0d1f3c");
+bg.addColorStop(0.75, "#0a2a3a");
+bg.addColorStop(1, "#0c2e2e");
+ctx.fillStyle = bg;
+ctx.fillRect(0, 0, W, H);
+
+// Vignette
+var vig = ctx.createRadialGradient(cx, 200, 50, cx, 240, 450);
+vig.addColorStop(0, "rgba(0,0,0,0)");
+vig.addColorStop(1, "rgba(0,0,0,0.4)");
+ctx.fillStyle = vig;
+ctx.fillRect(0, 0, W, H);
+
+// Body gradient
+var bodyGrad = ctx.createRadialGradient(cx, 280, 20, cx, 350, 380);
+bodyGrad.addColorStop(0, "#ffffff");
+bodyGrad.addColorStop(0.3, "#fafbfc");
+bodyGrad.addColorStop(0.55, "#f2f3f6");
+bodyGrad.addColorStop(0.75, "#e8eaef");
+bodyGrad.addColorStop(0.9, "#dde0e6");
+bodyGrad.addColorStop(1, "#d0d4db");
+
+// Body path - bell/dome shape extending past edges
+function bodyPath() {
+  ctx.beginPath();
+  ctx.moveTo(-80, H + 50);
+  ctx.bezierCurveTo(-60, H - 60, -20, 380, 40, 300);
+  ctx.bezierCurveTo(70, 250, 100, 210, 140, 185);
+  ctx.bezierCurveTo(170, 170, 200, 158, 230, 152);
+  ctx.bezierCurveTo(250, 148, 270, 146, cx, 145);
+  ctx.bezierCurveTo(cx + 50, 146, cx + 70, 148, cx + 90, 152);
+  ctx.bezierCurveTo(cx + 120, 158, cx + 150, 170, cx + 180, 185);
+  ctx.bezierCurveTo(cx + 220, 210, cx + 250, 250, cx + 280, 300);
+  ctx.bezierCurveTo(cx + 300, 380, cx + 340, H - 60, cx + 400, H + 50);
+  ctx.closePath();
+}
+
+bodyPath();
+ctx.fillStyle = bodyGrad;
+ctx.fill();
+
+// Body side shading
+ctx.save();
+bodyPath();
+ctx.clip();
+var sh = ctx.createLinearGradient(-50, 0, 120, 0);
+sh.addColorStop(0, "rgba(0,0,0,0.1)");
+sh.addColorStop(1, "rgba(0,0,0,0)");
+ctx.fillStyle = sh;
+ctx.fillRect(-80, 140, 200, 400);
+sh = ctx.createLinearGradient(W + 80, 0, W - 80, 0);
+sh.addColorStop(0, "rgba(0,0,0,0.1)");
+sh.addColorStop(1, "rgba(0,0,0,0)");
+ctx.fillStyle = sh;
+ctx.fillRect(W - 120, 140, 200, 400);
+
+// Arm crease lines
+ctx.strokeStyle = "rgba(190,195,205,0.25)";
+ctx.lineWidth = 1.5;
+ctx.beginPath();
+ctx.moveTo(130, 190);
+ctx.bezierCurveTo(100, 230, 60, 290, 30, 360);
+ctx.stroke();
+ctx.beginPath();
+ctx.moveTo(W - 130, 190);
+ctx.bezierCurveTo(W - 100, 230, W - 60, 290, W - 30, 360);
+ctx.stroke();
+ctx.restore();
+
+// Head - pill shaped
+var hg = ctx.createRadialGradient(cx, 100, 5, cx, 108, 55);
+hg.addColorStop(0, "#ffffff");
+hg.addColorStop(0.5, "#f8f9fb");
+hg.addColorStop(0.8, "#eff1f4");
+hg.addColorStop(1, "#e2e5ea");
+ctx.beginPath();
+ctx.ellipse(cx, 105, 52, 40, 0, 0, Math.PI * 2);
+ctx.fillStyle = hg;
+ctx.fill();
+
+// Head highlight
+var hl = ctx.createRadialGradient(cx, 78, 0, cx, 78, 30);
+hl.addColorStop(0, "rgba(255,255,255,0.6)");
+hl.addColorStop(1, "rgba(255,255,255,0)");
+ctx.beginPath();
+ctx.ellipse(cx, 78, 25, 8, 0, 0, Math.PI * 2);
+ctx.fillStyle = hl;
+ctx.fill();
+
+// Head bottom shadow
+ctx.strokeStyle = "rgba(200,205,215,0.35)";
+ctx.lineWidth = 1;
+ctx.beginPath();
+ctx.ellipse(cx, 105, 50, 38, 0, 0.15 * Math.PI, 0.85 * Math.PI);
+ctx.stroke();
+
+// Eyes - small black dots
+ctx.fillStyle = "#1a1a1a";
+ctx.beginPath();
+ctx.arc(cx - 16, 103, 7, 0, Math.PI * 2);
+ctx.fill();
+ctx.beginPath();
+ctx.arc(cx + 16, 103, 7, 0, Math.PI * 2);
+ctx.fill();
+
+// Connecting line between eyes
+ctx.strokeStyle = "#1a1a1a";
+ctx.lineWidth = 2.5;
+ctx.beginPath();
+ctx.moveTo(cx - 9, 103);
+ctx.lineTo(cx + 9, 103);
+ctx.stroke();
+
+// Eye highlights
+ctx.fillStyle = "rgba(255,255,255,0.2)";
+ctx.beginPath();
+ctx.arc(cx - 14, 101, 2, 0, Math.PI * 2);
+ctx.fill();
+ctx.beginPath();
+ctx.arc(cx + 18, 101, 2, 0, Math.PI * 2);
+ctx.fill();
+
+// Logo — will be drawn by drawLogo() after image loads
+window.drawLogo = function(b64) {
+  var img = new Image();
+  img.onload = function() {
+    // Draw logo centered on chest area, 80x54 px
+    var lw = 80, lh = 54;
+    ctx.globalAlpha = 0.85;
+    ctx.drawImage(img, cx - lw/2, 200, lw, lh);
+    ctx.globalAlpha = 1;
+    document.title = "LOGO_DONE";
+  };
+  img.src = "data:image/png;base64," + b64;
+};
+
+// Label
+ctx.fillStyle = "rgba(0,188,212,0.5)";
+ctx.font = "13px Arial";
+ctx.textAlign = "center";
+ctx.fillText("RealSync Bot", cx, H - 10);
+
+document.title = "READY";
+</script>
+</body>
+</html>

@@ -7,6 +7,12 @@ require("dotenv").config();
 
 const { createSttStream } = require("./lib/gcpStt");
 const { MEETING_TYPES, scoreMeetingType, generateSuggestions } = require("./lib/suggestions");
+const { analyzeFrame, checkHealth: checkAiHealth } = require("./lib/aiClient");
+const { AlertFusionEngine } = require("./lib/alertFusion");
+const { FraudDetector } = require("./lib/fraudDetector");
+const persistence = require("./lib/persistence");
+const { detectMeetingType } = require("./lib/meetingTypeDetector");
+const botManager = require("./bot/botManager");
 
 const app = express();
 app.use(cors());
@@ -148,7 +154,7 @@ const deriveMetrics = (payload) => {
   };
 };
 
-const createSession = ({ title, meetingType }) => {
+const createSession = ({ title, meetingType, meetingUrl = null }) => {
   const id = uuidv4();
   const session = {
     id,
@@ -156,7 +162,9 @@ const createSession = ({ title, meetingType }) => {
     createdAt: makeIso(),
     endedAt: null,
     meetingTypeSelected: MEETING_TYPES.includes(meetingType) ? meetingType : "business",
+    meetingTypeManual: MEETING_TYPES.includes(meetingType) ? meetingType : null,
     meetingTypeAuto: { label: null, confidence: 0, scores: null },
+    meetingUrl: meetingUrl || null,
     metrics: generateSimulatedMetrics(),
     source: "simulated",
     subscribers: new Set(),
@@ -169,10 +177,22 @@ const createSession = ({ title, meetingType }) => {
       lines: [],
     },
     stt: null,
+    // Per-session alert fusion engine and fraud detector
+    alertFusion: new AlertFusionEngine(),
+    fraudDetector: new FraudDetector(),
+    // Bot state
+    botStatus: "idle", // idle | joining | connected | disconnected
+    botStreams: { audio: false, video: false, captions: false },
+    // Alert history (in-memory, also persisted to Supabase)
+    alerts: [],
   };
 
   sessions.set(id, session);
   latestSessionId = id;
+
+  // Persist to Supabase (non-blocking)
+  persistence.createSession({ id, title: session.title, meetingType: session.meetingTypeSelected, meetingUrl }).catch(() => {});
+
   return session;
 };
 
@@ -222,18 +242,21 @@ wssSubscribe.on("connection", (socket, req) => {
 });
 
 const handleTranscript = (session, transcript) => {
-  const { text, isFinal, confidence, ts } = transcript;
+  const { text, isFinal, confidence, ts, speaker } = transcript;
 
   if (isFinal) {
-    session.transcriptState.lines.push({ text, ts, confidence });
+    session.transcriptState.lines.push({ text, ts, confidence, speaker });
     session.transcriptState.interim = "";
+
+    // Persist to Supabase (non-blocking)
+    persistence.insertTranscriptLine(session.id, { text, isFinal, confidence, ts, speaker }).catch(() => {});
   } else {
     session.transcriptState.interim = text;
   }
 
-  // Auto-detect meeting type (secondary signal).
-  const typeScore = scoreMeetingType(text);
-  session.meetingTypeAuto = typeScore;
+  // Auto-detect meeting type using enhanced 3-channel detector
+  const typeResult = detectMeetingType(session);
+  session.meetingTypeAuto = typeResult;
 
   // Suggestions are rules-first and deterministic.
   const suggestions = generateSuggestions({
@@ -246,6 +269,7 @@ const handleTranscript = (session, transcript) => {
   broadcastToSession(session.id, {
     type: "transcript",
     text,
+    speaker: speaker || null,
     isFinal,
     confidence: typeof confidence === "number" ? toFixedNumber(confidence, 3) : null,
     ts,
@@ -259,14 +283,29 @@ const handleTranscript = (session, transcript) => {
       message: suggestion.message,
       ts: suggestion.ts,
     });
+    // Persist suggestion (non-blocking)
+    persistence.insertSuggestion(session.id, suggestion).catch(() => {});
   });
+
+  // Fraud/scam detection on final transcript lines
+  if (isFinal && session.fraudDetector) {
+    const fraudAlerts = session.fraudDetector.evaluate(text, session.metrics);
+    // Fuse with visual state (escalate if deepfake risk is elevated)
+    const fusedAlerts = session.alertFusion.fuseWithTranscript(session, fraudAlerts);
+
+    fusedAlerts.forEach((alert) => {
+      session.alerts.push(alert);
+      broadcastToSession(session.id, { type: "alert", ...alert });
+      persistence.insertAlert(session.id, alert).catch(() => {});
+    });
+  }
 
   // Meeting type mismatch notice (low severity) if auto confidence is strong.
   const now = Date.now();
   if (
-    typeScore.confidence >= 0.75 &&
-    typeScore.label &&
-    typeScore.label !== session.meetingTypeSelected &&
+    typeResult.confidence >= 0.75 &&
+    typeResult.label &&
+    typeResult.label !== session.meetingTypeSelected &&
     now - session.suggestionState.lastMeetingTypeNoticeAt > 120_000
   ) {
     session.suggestionState.lastMeetingTypeNoticeAt = now;
@@ -274,7 +313,7 @@ const handleTranscript = (session, transcript) => {
       type: "suggestion",
       severity: "low",
       title: "Meeting Type Check",
-      message: `Transcript sounds more like a ${typeScore.label} meeting. Confirm meeting type if needed.`,
+      message: `Transcript sounds more like a ${typeResult.label} meeting (detected via ${typeResult.source}). Confirm meeting type if needed.`,
       ts: makeIso(),
     });
   }
@@ -335,8 +374,43 @@ wssIngest.on("connection", (socket, req) => {
       return;
     }
 
-    // Optional v1: forward frames to AI service (not implemented yet).
+    // Video frame: forward to AI Inference Service for analysis
     if (message.type === "frame") {
+      handleFrame(session, message).catch((err) => {
+        console.warn(`Frame analysis error for session ${session.id}: ${err?.message ?? err}`);
+      });
+      return;
+    }
+
+    // Captions from Zoom CC or similar source
+    if (message.type === "caption") {
+      const text = typeof message.text === "string" ? message.text : "";
+      if (!text.trim()) return;
+
+      handleTranscript(session, {
+        text,
+        isFinal: true,
+        confidence: 0.95, // Captions are high-confidence
+        ts: message.ts || makeIso(),
+        speaker: message.speaker || "unknown",
+        source: "caption",
+      });
+      return;
+    }
+
+    // Source status heartbeat from bot adapter
+    if (message.type === "source_status") {
+      session.botStatus = message.status || "connected";
+      session.botStreams = message.streams || { audio: false, video: false, captions: false };
+
+      broadcastToSession(session.id, {
+        type: "sourceStatus",
+        status: session.botStatus,
+        streams: session.botStreams,
+        ts: message.ts || makeIso(),
+      });
+
+      persistence.updateBotStatus(session.id, session.botStatus).catch(() => {});
       return;
     }
   });
@@ -347,6 +421,58 @@ wssIngest.on("connection", (socket, req) => {
     session.stt = null;
   });
 });
+
+/* ------------------------------------------------------------------ */
+/*  Frame analysis handler                                             */
+/* ------------------------------------------------------------------ */
+
+/** Throttle: max 1 frame analysis in-flight per session */
+const frameInFlight = new Map(); // sessionId → boolean
+/** Snapshot metrics to Supabase every Nth frame */
+let frameCounter = 0;
+
+async function handleFrame(session, message) {
+  // Throttle: skip if a frame is already being analyzed for this session
+  if (frameInFlight.get(session.id)) return;
+  frameInFlight.set(session.id, true);
+
+  try {
+    const result = await analyzeFrame({
+      sessionId: session.id,
+      frameB64: message.dataB64,
+      capturedAt: message.capturedAt || makeIso(),
+    });
+
+    if (!result || !result.aggregated) return;
+
+    // Update session metrics from AI response
+    session.metrics = {
+      ...result.aggregated,
+      timestamp: result.processedAt || makeIso(),
+      source: "external",
+    };
+    session.source = "external";
+
+    // Broadcast updated metrics to subscribers
+    broadcastToSession(session.id, { type: "metrics", data: session.metrics });
+
+    // Evaluate visual alerts
+    const visualAlerts = session.alertFusion.evaluateVisual(session, result);
+    visualAlerts.forEach((alert) => {
+      session.alerts.push(alert);
+      broadcastToSession(session.id, { type: "alert", ...alert });
+      persistence.insertAlert(session.id, alert).catch(() => {});
+    });
+
+    // Persist metrics snapshot every 5th frame (~10s at 2fps)
+    frameCounter++;
+    if (frameCounter % 5 === 0) {
+      persistence.insertMetricsSnapshot(session.id, session.metrics).catch(() => {});
+    }
+  } finally {
+    frameInFlight.set(session.id, false);
+  }
+}
 
 const ensureBroadcastLoop = () => {
   if (broadcastInterval) return;
@@ -403,7 +529,7 @@ app.get("/api/models", (req, res) => {
 });
 
 app.post("/api/sessions", (req, res) => {
-  const { title, meetingType } = req.body ?? {};
+  const { title, meetingType, meetingUrl, scheduledAt } = req.body ?? {};
   if (!title || typeof title !== "string" || !title.trim()) {
     return res.status(400).json({ error: "title is required" });
   }
@@ -411,7 +537,13 @@ app.post("/api/sessions", (req, res) => {
     return res.status(400).json({ error: `meetingType must be one of: ${MEETING_TYPES.join(", ")}` });
   }
 
-  const session = createSession({ title, meetingType });
+  const session = createSession({ title, meetingType, meetingUrl: meetingUrl || null });
+
+  // Store scheduledAt on session if provided (for reference)
+  if (scheduledAt) {
+    session.scheduledAt = scheduledAt;
+  }
+
   return res.json({
     sessionId: session.id,
     ingestWsUrl: `/ws/ingest?sessionId=${session.id}`,
@@ -426,6 +558,9 @@ app.get("/api/sessions", (req, res) => {
     createdAt: s.createdAt,
     endedAt: s.endedAt,
     meetingType: s.meetingTypeSelected,
+    meetingUrl: s.meetingUrl || null,
+    scheduledAt: s.scheduledAt || null,
+    botStatus: s.botStatus || "idle",
   }));
   res.json({ sessions: list });
 });
@@ -464,7 +599,7 @@ app.post("/api/sessions/:id/metrics", (req, res) => {
   return res.json({ status: "ok", storedAt: session.metrics.timestamp });
 });
 
-app.post("/api/sessions/:id/stop", (req, res) => {
+app.post("/api/sessions/:id/stop", async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "not found" });
 
@@ -472,7 +607,169 @@ app.post("/api/sessions/:id/stop", (req, res) => {
   session.stt?.end?.();
   session.stt = null;
 
+  // Stop bot if running
+  botManager.stopBot(session.id);
+  session.botStatus = "disconnected";
+
+  // Persist session end
+  persistence.endSession(session.id).catch(() => {});
+
+  // Generate post-meeting report (non-blocking)
+  persistence.generateReport(session.id).catch(() => {});
+
   return res.json({ ok: true, endedAt: session.endedAt });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Bot management endpoints                                           */
+/* ------------------------------------------------------------------ */
+
+app.post("/api/sessions/:id/join", (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  const { meetingUrl, displayName } = req.body ?? {};
+  if (!meetingUrl || typeof meetingUrl !== "string") {
+    return res.status(400).json({ error: "meetingUrl is required" });
+  }
+
+  session.meetingUrl = meetingUrl;
+
+  const result = botManager.startBot({
+    sessionId: session.id,
+    meetingUrl,
+    displayName: displayName || "RealSync Bot",
+    onIngestMessage: (message) => {
+      // Route bot messages through the same ingest pipeline
+      if (message.type === "frame") {
+        handleFrame(session, message).catch(() => {});
+      } else if (message.type === "caption") {
+        handleTranscript(session, {
+          text: message.text,
+          isFinal: true,
+          confidence: 0.95,
+          ts: message.ts || makeIso(),
+          speaker: message.speaker || "unknown",
+          source: "caption",
+        });
+      } else if (message.type === "source_status") {
+        session.botStatus = message.status || "connected";
+        session.botStreams = message.streams || {};
+        broadcastToSession(session.id, {
+          type: "sourceStatus",
+          status: session.botStatus,
+          streams: session.botStreams,
+          ts: message.ts || makeIso(),
+        });
+        persistence.updateBotStatus(session.id, session.botStatus).catch(() => {});
+      } else if (message.type === "audio_pcm") {
+        // Route audio to STT
+        if (!session.stt) {
+          session.stt = createSttStream({
+            onTranscript: (t) => handleTranscript(session, t),
+            onError: (err) => {
+              console.warn(`STT error for session ${session.id}: ${err?.message ?? err}`);
+            },
+          });
+        }
+        const dataB64 = message.dataB64;
+        if (typeof dataB64 === "string" && dataB64) {
+          session.stt.write(Buffer.from(dataB64, "base64"));
+        }
+      }
+    },
+  });
+
+  return res.json({
+    status: result.status,
+    botId: result.botId,
+    sessionId: session.id,
+  });
+});
+
+app.post("/api/sessions/:id/leave", (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  const result = botManager.stopBot(session.id, (message) => {
+    if (message.type === "source_status") {
+      session.botStatus = message.status;
+      session.botStreams = message.streams || {};
+      broadcastToSession(session.id, {
+        type: "sourceStatus",
+        status: session.botStatus,
+        streams: session.botStreams,
+        ts: message.ts || makeIso(),
+      });
+    }
+  });
+
+  session.botStatus = "disconnected";
+  return res.json({ ok: result.ok, sessionId: session.id });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Data retrieval endpoints                                           */
+/* ------------------------------------------------------------------ */
+
+app.get("/api/sessions/:id/alerts", async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  // Try Supabase first, fall back to in-memory
+  const persisted = await persistence.getSessionAlerts(session.id);
+  if (persisted && persisted.length > 0) {
+    return res.json({ alerts: persisted });
+  }
+  return res.json({ alerts: session.alerts || [] });
+});
+
+app.get("/api/sessions/:id/transcript", async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  // Try Supabase first, fall back to in-memory
+  const persisted = await persistence.getSessionTranscript(session.id);
+  if (persisted && persisted.length > 0) {
+    return res.json({ lines: persisted });
+  }
+  return res.json({ lines: session.transcriptState?.lines || [] });
+});
+
+app.get("/api/sessions/:id/report", async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  // Check Supabase for existing report
+  let report = await persistence.getSessionReport(session.id);
+
+  // Validate the report has full data (severityBreakdown etc.)
+  const hasFullReport = report?.summary?.severityBreakdown;
+
+  if (!hasFullReport) {
+    // Build from in-memory data (always authoritative while session is in memory)
+    const sessionAlerts = session.alerts || [];
+    report = {
+      summary: {
+        sessionId: session.id,
+        title: session.title,
+        meetingType: session.meetingTypeSelected,
+        createdAt: session.createdAt,
+        endedAt: session.endedAt,
+        totalAlerts: sessionAlerts.length,
+        totalTranscriptLines: (session.transcriptState?.lines || []).length,
+        severityBreakdown: {
+          low: sessionAlerts.filter((a) => a.severity === "low").length,
+          medium: sessionAlerts.filter((a) => a.severity === "medium").length,
+          high: sessionAlerts.filter((a) => a.severity === "high").length,
+          critical: sessionAlerts.filter((a) => a.severity === "critical").length,
+        },
+        generatedAt: makeIso(),
+      },
+    };
+  }
+
+  return res.json(report);
 });
 
 app.get("/api/metrics", (req, res) => {

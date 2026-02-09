@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html><head><style>body{margin:0;background:#000}canvas{display:block}</style></head>
+<body>
+<canvas id="c" width="640" height="480"></canvas>
+<script>
+var c = document.getElementById("c");
+var ctx = c.getContext("2d");
+var W = 640, H = 480;
+
+window.loadImg = function(b64) {
+  var img = new Image();
+  img.onload = function() {
+    // Draw fitted (cover mode)
+    var imgAspect = img.width / img.height;
+    var canvasAspect = W / H;
+    var sx, sy, sw, sh;
+    if (imgAspect > canvasAspect) {
+      sh = img.height; sw = sh * canvasAspect;
+      sx = (img.width - sw) / 2; sy = 0;
+    } else {
+      sw = img.width; sh = sw / canvasAspect;
+      sx = 0; sy = (img.height - sh) / 2;
+    }
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, W, H);
+
+    // Scan for the darkest pixels in the head region (y: 50-150, x: 250-390)
+    // The eyes are small black dots
+    var darkPixels = [];
+    var imgData = ctx.getImageData(0, 0, W, H);
+    var d = imgData.data;
+    for (var y = 50; y < 160; y++) {
+      for (var x = 250; x < 400; x++) {
+        var idx = (y * W + x) * 4;
+        var brightness = d[idx] + d[idx+1] + d[idx+2];
+        if (brightness < 100) { // Very dark pixels
+          darkPixels.push({x: x, y: y, b: brightness});
+        }
+      }
+    }
+
+    // Cluster the dark pixels to find eye centers
+    if (darkPixels.length > 0) {
+      // Sort by x to find two clusters (left eye, right eye)
+      darkPixels.sort(function(a,b) { return a.x - b.x; });
+
+      // Find the median x to split into two groups
+      var minX = darkPixels[0].x;
+      var maxX = darkPixels[darkPixels.length - 1].x;
+      var midX = (minX + maxX) / 2;
+
+      var leftEye = darkPixels.filter(function(p) { return p.x < midX; });
+      var rightEye = darkPixels.filter(function(p) { return p.x >= midX; });
+
+      function center(pixels) {
+        var sx = 0, sy = 0;
+        pixels.forEach(function(p) { sx += p.x; sy += p.y; });
+        return { x: Math.round(sx / pixels.length), y: Math.round(sy / pixels.length) };
+      }
+
+      var lc = leftEye.length > 0 ? center(leftEye) : null;
+      var rc = rightEye.length > 0 ? center(rightEye) : null;
+
+      // Also find the extent (radius)
+      function radius(pixels, c) {
+        var maxR = 0;
+        pixels.forEach(function(p) {
+          var r = Math.sqrt((p.x - c.x) * (p.x - c.x) + (p.y - c.y) * (p.y - c.y));
+          if (r > maxR) maxR = r;
+        });
+        return Math.round(maxR);
+      }
+
+      var result = {
+        leftEye: lc,
+        leftRadius: lc ? radius(leftEye, lc) : 0,
+        leftCount: leftEye.length,
+        rightEye: rc,
+        rightRadius: rc ? radius(rightEye, rc) : 0,
+        rightCount: rightEye.length,
+        totalDark: darkPixels.length,
+        connectingLine: lc && rc ? { y: Math.round((lc.y + rc.y) / 2) } : null
+      };
+
+      // Draw markers
+      if (lc) {
+        ctx.strokeStyle = "red";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(lc.x, lc.y, radius(leftEye, lc) + 3, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (rc) {
+        ctx.beginPath();
+        ctx.arc(rc.x, rc.y, radius(rightEye, rc) + 3, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      document.title = JSON.stringify(result);
+    } else {
+      document.title = JSON.stringify({error: "no dark pixels found"});
+    }
+  };
+  img.src = "data:image/png;base64," + b64;
+};
+</script>
+</body></html>

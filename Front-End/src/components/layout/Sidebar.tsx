@@ -1,4 +1,4 @@
-import { LayoutDashboard, Video, FileText, Settings, HelpCircle, Shield, Mail } from 'lucide-react';
+import { LayoutDashboard, Video, FileText, Settings, HelpCircle, Mail } from 'lucide-react';
 import logo from 'figma:asset/4401d6799dc4e6061a79080f8825d69ae920f198.png';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 
@@ -24,7 +24,10 @@ export function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
   return (
     <div className="w-64 bg-[#1a1a2e] h-screen flex flex-col border-r border-gray-800">
       {/* Logo */}
-      <div className="p-6 border-b border-gray-800">
+      <div
+        className="p-6 border-b border-gray-800 cursor-pointer hover:opacity-80 transition-opacity"
+        onClick={() => onNavigate('dashboard')}
+      >
         <div className="flex justify-center">
           <img src={logo} alt="RealSync Logo" className="w-40 h-auto" />
         </div>
@@ -60,7 +63,7 @@ export function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-              currentScreen === 'help' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+              currentScreen === 'faq' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'
             }`}>
               <HelpCircle className="w-5 h-5" />
               <span>Help</span>

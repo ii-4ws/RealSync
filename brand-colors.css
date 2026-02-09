@@ -1,0 +1,123 @@
+/*
+ * RealSync Design Tokens
+ * Brand Identity v1.0 — February 2026
+ *
+ * Import into any CSS context:
+ *   @import './brand-colors.css';
+ *
+ * Usage in CSS:
+ *   background: var(--rs-bg-card);
+ *   color: var(--rs-cyan);
+ *   background: var(--rs-gradient-primary);
+ */
+
+:root {
+  /* ──────────────────────────────────────────
+     BACKGROUNDS (dark → light)
+     ────────────────────────────────────────── */
+  --rs-bg-deep:      #0A0A14;  /* Login screen, deepest surface */
+  --rs-bg-base:      #0F0F1E;  /* App page background */
+  --rs-bg-recessed:  #141427;  /* Nested containers, transcript area */
+  --rs-bg-card:      #1A1A2E;  /* Cards, sidebar, dialogs, tables */
+  --rs-bg-elevated:  #2A2A3E;  /* Hover states, inputs, progress tracks */
+  --rs-bg-hover:     #3A3A4E;  /* Scrollbar thumb hover, tertiary hover */
+
+  /* ──────────────────────────────────────────
+     PRIMARY ACCENTS
+     ────────────────────────────────────────── */
+  --rs-cyan:         #22D3EE;  /* Primary accent, CTAs, links, highlights */
+  --rs-cyan-hover:   #06B6D4;  /* Hover state for cyan elements */
+  --rs-blue:         #3B82F6;  /* Gradient endpoint, active nav */
+  --rs-blue-active:  #2563EB;  /* Sidebar active, pagination active */
+
+  /* ──────────────────────────────────────────
+     SECONDARY ACCENTS
+     ────────────────────────────────────────── */
+  --rs-purple:       #A855F7;  /* Chart segments, tertiary accent */
+  --rs-purple-deep:  #6D28D9;  /* Logo gradient only */
+  --rs-orange:       #FB923C;  /* Warnings, behavior confidence */
+  --rs-orange-dark:  #F97316;  /* High-severity badge background */
+
+  /* ──────────────────────────────────────────
+     SEVERITY SYSTEM
+     ────────────────────────────────────────── */
+  --rs-severity-low:      #4ADE80;  /* Green — safe, completed, low risk */
+  --rs-severity-medium:   #FACC15;  /* Yellow — caution, medium risk */
+  --rs-severity-high:     #FB923C;  /* Orange — urgent, high risk */
+  --rs-severity-critical: #F87171;  /* Red — critical alerts, flagged */
+  --rs-info:              #60A5FA;  /* Blue — informational panels */
+
+  /* ──────────────────────────────────────────
+     TEXT COLORS
+     ────────────────────────────────────────── */
+  --rs-text-primary:   #FFFFFF;  /* Headings, primary text */
+  --rs-text-secondary: #E5E7EB;  /* Transcript, secondary content */
+  --rs-text-tertiary:  #D1D5DB;  /* Table data, form labels */
+  --rs-text-muted:     #9CA3AF;  /* Descriptions, inactive nav */
+  --rs-text-subtle:    #6B7280;  /* Timestamps, helper text */
+
+  /* ──────────────────────────────────────────
+     BORDERS
+     ────────────────────────────────────────── */
+  --rs-border-default:  #1F2937;  /* Card borders, dividers */
+  --rs-border-input:    #374151;  /* Input borders, outline buttons */
+  --rs-border-subtle:   #4B5563;  /* Checkbox borders, tertiary */
+
+  /* ──────────────────────────────────────────
+     BORDER RADII
+     ────────────────────────────────────────── */
+  --rs-radius-sm:   8px;     /* Elements, inputs (rounded-lg) */
+  --rs-radius-md:   12px;    /* Cards, panels (rounded-xl) */
+  --rs-radius-lg:   16px;    /* Login card, modals (rounded-2xl) */
+  --rs-radius-full: 9999px;  /* Avatars, pills (rounded-full) */
+
+  /* ──────────────────────────────────────────
+     SPACING
+     ────────────────────────────────────────── */
+  --rs-space-1:   4px;
+  --rs-space-2:   8px;
+  --rs-space-3:  12px;
+  --rs-space-4:  16px;
+  --rs-space-6:  24px;
+  --rs-space-8:  32px;
+
+  /* ──────────────────────────────────────────
+     TYPOGRAPHY
+     ────────────────────────────────────────── */
+  --rs-font-sans:  'Space Grotesk', ui-sans-serif, system-ui, sans-serif,
+                   'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji';
+  --rs-font-mono:  'JetBrains Mono', ui-monospace, SFMono-Regular,
+                   Menlo, Monaco, Consolas, 'Courier New', monospace;
+
+  --rs-text-xs:    0.75rem;   /* 12px — captions, timestamps */
+  --rs-text-sm:    0.875rem;  /* 14px — table data, labels */
+  --rs-text-base:  1rem;      /* 16px — body text */
+  --rs-text-lg:    1.125rem;  /* 18px — card sub-headings */
+  --rs-text-xl:    1.25rem;   /* 20px — card titles */
+  --rs-text-2xl:   1.5rem;    /* 24px — page titles */
+  --rs-text-3xl:   1.875rem;  /* 30px — large stat values */
+  --rs-text-6xl:   3rem;      /* 48px — trust score percentage */
+
+  /* ──────────────────────────────────────────
+     GRADIENTS
+     ────────────────────────────────────────── */
+  --rs-gradient-primary: linear-gradient(to right, #22D3EE, #3B82F6);
+  --rs-gradient-hover:   linear-gradient(to right, #06B6D4, #2563EB);
+  --rs-gradient-accent:  linear-gradient(to right, #6D28D9, #3B82F6, #22D3EE);
+  --rs-gradient-divider: linear-gradient(to right, transparent, #374151, transparent);
+
+  /* ──────────────────────────────────────────
+     SHADOWS
+     ────────────────────────────────────────── */
+  --rs-shadow-glow: 0 10px 15px -3px rgba(34, 211, 238, 0.25);
+  --rs-shadow-card: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+
+  /* ──────────────────────────────────────────
+     ANIMATION
+     ────────────────────────────────────────── */
+  --rs-duration-fast:    150ms;
+  --rs-duration-normal:  300ms;
+  --rs-duration-slow:    500ms;
+  --rs-easing-default:   cubic-bezier(0.4, 0, 0.2, 1);
+  --rs-easing-pulse:     cubic-bezier(0.4, 0, 0.6, 1);
+}

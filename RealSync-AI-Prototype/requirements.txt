@@ -8,3 +8,7 @@ fer
 moviepy
 scikit-learn
 tensorflow
+# FastAPI AI Inference Service
+fastapi
+uvicorn[standard]
+pydantic

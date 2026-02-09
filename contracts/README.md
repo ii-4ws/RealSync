@@ -1,10 +1,21 @@
-# RealSync Contracts (v1)
+# RealSync Contracts (v1 — FROZEN)
 
 This folder documents the **frozen contracts** between:
 - Frontend (Vite/React) ↔ Backend (Node/Express + WebSockets)
-- Backend ↔ AI service (FastAPI)
+- Backend ↔ AI Inference Service (FastAPI)
+- Zoom Bot Adapter ↔ Backend
 
 These contracts are intentionally small and stable so multiple teammates can work in parallel.
+**Do not change schemas without team agreement.**
+
+## Files
+
+| File | Describes |
+|------|-----------|
+| `ingest.schema.json` | All messages from Bot/Client → Backend on WS `/ws/ingest` |
+| `subscribe.schema.json` | All events from Backend → Frontend on WS `/ws` |
+| `ai-inference.schema.json` | HTTP request/response for Backend → AI Service |
+| `supabase-migration.sql` | Database schema for Supabase Postgres |
 
 ## Meeting Types
 
@@ -12,65 +23,43 @@ These contracts are intentionally small and stable so multiple teammates can wor
 - `business`
 - `friends`
 
-## REST
+## Quick Reference
 
-### Create session
+### REST Endpoints
 
-`POST /api/sessions`
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/sessions` | Create session (`{ title, meetingType }`) |
+| GET | `/api/sessions` | List all sessions |
+| POST | `/api/sessions/:id/join` | Trigger bot to join Zoom meeting |
+| POST | `/api/sessions/:id/leave` | Trigger bot to leave meeting |
+| POST | `/api/sessions/:id/stop` | End session |
+| GET | `/api/sessions/:id/metrics` | Get session metrics |
+| POST | `/api/sessions/:id/metrics` | Push external metrics |
+| GET | `/api/sessions/:id/alerts` | Get session alerts |
+| GET | `/api/sessions/:id/transcript` | Get session transcript |
+| GET | `/api/sessions/:id/report` | Get session report |
 
-Request:
-```json
-{ "title": "Q3 Review", "meetingType": "business" }
-```
+### WebSocket Channels
 
-Response:
-```json
-{
-  "sessionId": "uuid",
-  "ingestWsUrl": "/ws/ingest?sessionId=uuid",
-  "subscribeWsUrl": "/ws?sessionId=uuid"
-}
-```
+| Path | Direction | Purpose |
+|------|-----------|---------|
+| `/ws?sessionId=<id>` | Server → Client | Subscribe to live events |
+| `/ws/ingest?sessionId=<id>` | Client → Server | Send audio/video/captions |
 
-## WebSockets
+### Subscribe Event Types
 
-### Subscribe (server → client)
+- `metrics` — live trust/emotion/identity/deepfake scores
+- `transcript` — speech-to-text (interim + final)
+- `alert` — critical notifications (deepfake, fraud, identity, altercation)
+- `suggestion` — non-critical guidance
+- `sourceStatus` — bot connection health
 
-`GET /ws?sessionId=<id>`
+### Ingest Message Types
 
-Messages:
-- Metrics:
-```json
-{ "type": "metrics", "sessionId": "uuid", "data": { "trustScore": 0.98 } }
-```
-- Transcript (interim + final):
-```json
-{ "type": "transcript", "sessionId": "uuid", "text": "hello…", "isFinal": false, "confidence": 0.82, "ts": "ISO8601" }
-```
-- Suggestion:
-```json
-{ "type": "suggestion", "sessionId": "uuid", "severity": "high", "title": "Verify before acting", "message": "...", "ts": "ISO8601" }
-```
-
-### Ingest (client → server)
-
-`GET /ws/ingest?sessionId=<id>`
-
-Messages:
-- Start:
-```json
-{ "type": "start", "sessionId": "uuid", "meetingType": "business" }
-```
-- Video frame (optional, v1):
-```json
-{ "type": "frame", "ts": "ISO8601", "mime": "image/jpeg", "dataB64": "..." }
-```
-- Audio PCM (16kHz mono, LINEAR16):
-```json
-{ "type": "audio_pcm", "sampleRate": 16000, "channels": 1, "dataB64": "..." }
-```
-- Stop:
-```json
-{ "type": "stop", "sessionId": "uuid" }
-```
-
+- `start` — begin ingestion
+- `stop` — end ingestion
+- `audio_pcm` — PCM16 audio chunk (16kHz, mono, base64)
+- `frame` — JPEG video frame (base64)
+- `caption` — Zoom CC text with speaker name
+- `source_status` — bot health heartbeat

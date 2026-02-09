@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Sidebar } from '../layout/Sidebar';
 import { TopBar } from '../layout/TopBar';
-import { AlertTriangle, AlertCircle } from 'lucide-react';
+import { AlertTriangle, AlertCircle, PhoneOff, Loader2 } from 'lucide-react';
 import { buildApiUrl, buildWsUrl } from '../../lib/api';
 import { Button } from '../ui/button';
-import { startMicPcm16Stream, type MicPcmStreamHandle } from '../../lib/audioPcm';
+import { toast } from 'sonner';
 
 interface DashboardScreenProps {
   onNavigate: (screen: 'login' | 'dashboard' | 'sessions' | 'reports' | 'settings' | 'faq') => void;
   onSignOut?: () => void;
+  onEndSession?: () => void;
+  onBotConnected?: () => void;
   profilePhoto?: string | null;
   userName?: string;
   userEmail?: string;
@@ -21,18 +23,24 @@ type EmotionLabel = 'Happy' | 'Neutral' | 'Angry' | 'Fear' | 'Surprise' | 'Sad';
 type RiskLevel = 'low' | 'medium' | 'high';
 type MeetingType = 'official' | 'business' | 'friends';
 
-type TranscriptEvent = {
-  text: string;
-  isFinal: boolean;
-  confidence: number | null;
+type AlertSeverity = 'low' | 'medium' | 'high' | 'critical';
+
+type AlertEvent = {
+  alertId: string;
+  severity: AlertSeverity;
+  category: string;
+  title: string;
+  message: string;
+  source?: { model: string; confidence: number };
   ts: string;
 };
 
-type SuggestionEvent = {
-  severity: RiskLevel;
-  title: string;
-  message: string;
-  ts: string;
+type BotStatus = 'idle' | 'joining' | 'connected' | 'degraded' | 'disconnected';
+
+type BotStreams = {
+  audio: boolean;
+  video: boolean;
+  captions: boolean;
 };
 
 type Metrics = {
@@ -105,6 +113,8 @@ const getRiskColor = (risk: RiskLevel) => {
 export function DashboardScreen({
   onNavigate,
   onSignOut,
+  onEndSession,
+  onBotConnected,
   profilePhoto,
   userName,
   userEmail,
@@ -115,85 +125,13 @@ export function DashboardScreen({
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [metricsError, setMetricsError] = useState<string | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
-  const [transcriptLines, setTranscriptLines] = useState<TranscriptEvent[]>([]);
-  const [transcriptInterim, setTranscriptInterim] = useState<string>('');
-  const [suggestions, setSuggestions] = useState<SuggestionEvent[]>([]);
-  const [captionsActive, setCaptionsActive] = useState(false);
-  const [captionsError, setCaptionsError] = useState<string | null>(null);
+  const [endingSession, setEndingSession] = useState(false);
 
-  const ingestWsRef = useRef<WebSocket | null>(null);
-  const micRef = useRef<MicPcmStreamHandle | null>(null);
-
-  const stopCaptions = () => {
-    micRef.current?.stop();
-    micRef.current = null;
-
-    if (ingestWsRef.current?.readyState === WebSocket.OPEN && sessionId) {
-      ingestWsRef.current.send(JSON.stringify({ type: 'stop', sessionId }));
-    }
-
-    ingestWsRef.current?.close();
-    ingestWsRef.current = null;
-    setCaptionsActive(false);
-  };
-
-  const startCaptions = async () => {
-    if (captionsActive) return;
-    if (!sessionId) {
-      setCaptionsError('Start a session first (Sessions → New Session).');
-      return;
-    }
-
-    setCaptionsError(null);
-
-    const ingestWs = new WebSocket(buildWsUrl(`/ws/ingest?sessionId=${encodeURIComponent(sessionId)}`));
-    ingestWsRef.current = ingestWs;
-
-    ingestWs.onopen = async () => {
-      ingestWs.send(
-        JSON.stringify({
-          type: 'start',
-          sessionId,
-          meetingType: meetingType ?? 'business',
-        })
-      );
-
-      try {
-        micRef.current = await startMicPcm16Stream({
-          onChunkB64: (dataB64) => {
-            if (ingestWs.readyState !== WebSocket.OPEN) return;
-            ingestWs.send(
-              JSON.stringify({
-                type: 'audio_pcm',
-                sampleRate: 16000,
-                channels: 1,
-                dataB64,
-              })
-            );
-          },
-          onError: () => {
-            setCaptionsError('Microphone capture failed.');
-          },
-        });
-        setCaptionsActive(true);
-      } catch (err) {
-        setCaptionsError('Microphone permission denied.');
-        ingestWs.close();
-      }
-    };
-
-    ingestWs.onclose = () => {
-      micRef.current?.stop();
-      micRef.current = null;
-      ingestWsRef.current = null;
-      setCaptionsActive(false);
-    };
-
-    ingestWs.onerror = () => {
-      setCaptionsError('Audio connection failed.');
-      stopCaptions();
-    };
-  };
+  // Alert and bot status state
+  const [alertEvents, setAlertEvents] = useState<AlertEvent[]>([]);
+  const [overlayAlert, setOverlayAlert] = useState<AlertEvent | null>(null);
+  const [botStatus, setBotStatus] = useState<BotStatus>('idle');
+  const [botStreams, setBotStreams] = useState<BotStreams>({ audio: false, video: false, captions: false });
 
   useEffect(() => {
     let isActive = true;
@@ -201,11 +139,10 @@ export function DashboardScreen({
     let pollingInterval: number | null = null;
 
     // Reset per-session UI state when the active session changes.
-    setTranscriptLines([]);
-    setTranscriptInterim('');
-    setSuggestions([]);
-    setCaptionsError(null);
-    stopCaptions();
+    setAlertEvents([]);
+    setOverlayAlert(null);
+    setBotStatus('idle');
+    setBotStreams({ audio: false, video: false, captions: false });
 
     const metricsPath = sessionId ? `/api/sessions/${sessionId}/metrics` : '/api/metrics';
     const subscribePath = sessionId ? `/ws?sessionId=${encodeURIComponent(sessionId)}` : '/ws';
@@ -267,31 +204,40 @@ export function DashboardScreen({
             return;
           }
 
-          if (message?.type === 'transcript' && typeof message?.text === 'string') {
-            const transcriptEvent: TranscriptEvent = {
-              text: message.text,
-              isFinal: Boolean(message.isFinal),
-              confidence: typeof message.confidence === 'number' ? message.confidence : null,
+          // Transcript events — handled by backend for reports; no dashboard UI needed
+          if (message?.type === 'transcript') {
+            return;
+          }
+
+          // Alert events (deepfake, fraud, identity, altercation)
+          if (message?.type === 'alert' && typeof message?.title === 'string') {
+            const alertEvent: AlertEvent = {
+              alertId: message.alertId || '',
+              severity: message.severity as AlertSeverity,
+              category: message.category || 'unknown',
+              title: message.title,
+              message: String(message.message || ''),
+              source: message.source,
               ts: typeof message.ts === 'string' ? message.ts : new Date().toISOString(),
             };
+            setAlertEvents((prev) => [alertEvent, ...prev].slice(0, 100));
 
-            if (transcriptEvent.isFinal) {
-              setTranscriptLines((prev) => [...prev, transcriptEvent].slice(-50));
-              setTranscriptInterim('');
-            } else {
-              setTranscriptInterim(transcriptEvent.text);
+            // Show overlay for critical/high alerts
+            if (alertEvent.severity === 'critical' || alertEvent.severity === 'high') {
+              setOverlayAlert(alertEvent);
             }
             return;
           }
 
-          if (message?.type === 'suggestion' && typeof message?.title === 'string') {
-            const suggestionEvent: SuggestionEvent = {
-              severity: message.severity as RiskLevel,
-              title: message.title,
-              message: String(message.message || ''),
-              ts: typeof message.ts === 'string' ? message.ts : new Date().toISOString(),
-            };
-            setSuggestions((prev) => [suggestionEvent, ...prev].slice(0, 25));
+          // Source status events (bot connection health)
+          if (message?.type === 'sourceStatus') {
+            const newStatus = (message.status as BotStatus) || 'disconnected';
+            setBotStatus(newStatus);
+            setBotStreams(message.streams || { audio: false, video: false, captions: false });
+            // Dismiss loading screen when bot connects
+            if (newStatus === 'connected') {
+              onBotConnected?.();
+            }
             return;
           }
 
@@ -327,9 +273,31 @@ export function DashboardScreen({
       isActive = false;
       stopPolling();
       ws?.close();
-      stopCaptions();
     };
   }, [sessionId]);
+
+  /** End session: leave meeting + stop session */
+  const handleEndSession = useCallback(async () => {
+    if (!sessionId || endingSession) return;
+    setEndingSession(true);
+    try {
+      // 1. Tell the bot to leave the meeting
+      await fetch(buildApiUrl(`/api/sessions/${sessionId}/leave`), { method: 'POST' }).catch(() => {});
+      // 2. Stop the session (generates report)
+      const res = await fetch(buildApiUrl(`/api/sessions/${sessionId}/stop`), { method: 'POST' });
+      if (!res.ok) {
+        throw new Error('Failed to stop session');
+      }
+      toast.success('Session ended — bot left the meeting');
+      setBotStatus('disconnected');
+      setBotStreams({ audio: false, video: false, captions: false });
+      onEndSession?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to end session');
+    } finally {
+      setEndingSession(false);
+    }
+  }, [sessionId, endingSession, onEndSession]);
 
   const displayMetrics = metrics ?? fallbackMetrics;
   const trustScorePercent = toPercent(displayMetrics.trustScore);
@@ -351,37 +319,40 @@ export function DashboardScreen({
   const alerts = useMemo(() => {
     const items: Array<{ type: 'error' | 'warning' | 'ok'; message: string; time: string }> = [];
 
-    // Prioritize explicit recommendations coming from transcript + risk signals.
-    suggestions.slice(0, 3).forEach((suggestion) => {
+    // Prioritize real alert events from the alert fusion engine
+    alertEvents.slice(0, 5).forEach((alert) => {
       items.push({
-        type: suggestion.severity === 'high' ? 'error' : 'warning',
-        message: `${suggestion.title}: ${suggestion.message}`,
-        time: new Date(suggestion.ts).toLocaleTimeString(),
+        type: alert.severity === 'critical' || alert.severity === 'high' ? 'error' : 'warning',
+        message: `[${alert.category}] ${alert.title}: ${alert.message}`,
+        time: new Date(alert.ts).toLocaleTimeString(),
       });
     });
 
-    if (displayMetrics.deepfake.riskLevel !== 'low') {
-      items.push({
-        type: displayMetrics.deepfake.riskLevel === 'high' ? 'error' : 'warning',
-        message: 'Potential visual manipulation detected.',
-        time: 'just now',
-      });
-    }
+    // Metric-derived alerts (only if no real alerts yet)
+    if (alertEvents.length === 0) {
+      if (displayMetrics.deepfake.riskLevel !== 'low') {
+        items.push({
+          type: displayMetrics.deepfake.riskLevel === 'high' ? 'error' : 'warning',
+          message: 'Potential visual manipulation detected.',
+          time: 'just now',
+        });
+      }
 
-    if (displayMetrics.identity.riskLevel !== 'low') {
-      items.push({
-        type: displayMetrics.identity.riskLevel === 'high' ? 'error' : 'warning',
-        message: 'Face embedding drift above baseline.',
-        time: 'just now',
-      });
-    }
+      if (displayMetrics.identity.riskLevel !== 'low') {
+        items.push({
+          type: displayMetrics.identity.riskLevel === 'high' ? 'error' : 'warning',
+          message: 'Face embedding drift above baseline.',
+          time: 'just now',
+        });
+      }
 
-    if (displayMetrics.emotion.label !== 'Neutral' && displayMetrics.emotion.confidence > 0.7) {
-      items.push({
-        type: 'warning',
-        message: `Elevated ${displayMetrics.emotion.label.toLowerCase()} expression detected.`,
-        time: 'just now',
-      });
+      if (displayMetrics.emotion.label !== 'Neutral' && displayMetrics.emotion.confidence > 0.7) {
+        items.push({
+          type: 'warning',
+          message: `Elevated ${displayMetrics.emotion.label.toLowerCase()} expression detected.`,
+          time: 'just now',
+        });
+      }
     }
 
     if (items.length === 0) {
@@ -393,7 +364,7 @@ export function DashboardScreen({
     }
 
     return items;
-  }, [displayMetrics, suggestions]);
+  }, [displayMetrics, alertEvents]);
 
   const confidenceScores = [
     { label: 'Audio', value: toPercent(displayMetrics.confidenceLayers.audio), color: 'bg-cyan-400' },
@@ -403,17 +374,51 @@ export function DashboardScreen({
 
   return (
     <div className="flex h-screen bg-[#0f0f1e]">
+      {/* Critical/High Alert Overlay */}
+      {overlayAlert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className={`max-w-md w-full mx-4 rounded-xl p-6 border-2 ${
+            overlayAlert.severity === 'critical'
+              ? 'bg-red-950 border-red-500 animate-pulse'
+              : 'bg-orange-950 border-orange-500'
+          }`}>
+            <div className="flex items-start gap-3">
+              <AlertCircle className={`w-8 h-8 flex-shrink-0 ${
+                overlayAlert.severity === 'critical' ? 'text-red-400' : 'text-orange-400'
+              }`} />
+              <div className="flex-1">
+                <p className={`text-lg font-bold ${
+                  overlayAlert.severity === 'critical' ? 'text-red-300' : 'text-orange-300'
+                }`}>
+                  {overlayAlert.title}
+                </p>
+                <p className="text-gray-300 text-sm mt-1">{overlayAlert.message}</p>
+                <p className="text-gray-500 text-xs mt-2">
+                  {overlayAlert.category} &middot; {new Date(overlayAlert.ts).toLocaleTimeString()}
+                </p>
+              </div>
+            </div>
+            <Button
+              className="mt-4 w-full bg-gray-800 hover:bg-gray-700 text-white"
+              onClick={() => setOverlayAlert(null)}
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
+
       <Sidebar currentScreen="dashboard" onNavigate={onNavigate} />
-      
+
       <div className="flex-1 flex flex-col overflow-hidden">
         <TopBar title="Dashboard" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />
-        
+
         <div className="flex-1 overflow-y-auto p-8">
           <div className="grid grid-cols-3 gap-6">
             {/* Live Trust Score */}
             <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
               <h3 className="text-gray-400 text-sm mb-6">Live Trust Score</h3>
-              
+
               <div className="flex items-center justify-center mb-4">
                 <div className="relative w-48 h-48">
                   {/* Circular progress */}
@@ -443,22 +448,22 @@ export function DashboardScreen({
                       </linearGradient>
                     </defs>
                   </svg>
-                  
+
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="text-center">
-                      <div className="text-6xl text-white mb-1">{trustScorePercent}%</div>
+                      <div className="text-6xl text-white mb-1 font-mono">{trustScorePercent}%</div>
                     </div>
                   </div>
                 </div>
               </div>
-              
+
               <p className="text-center text-gray-400 text-sm">Real-time Authenticity</p>
               <p className="text-center text-gray-500 text-xs mt-2">
                 {metricsError
                   ? 'Backend offline • showing last known values'
                   : `Updated ${lastUpdatedLabel} • ${sourceLabel} • ${connectionLabel}`}
               </p>
-              
+
               <div className="mt-4 h-2 bg-[#2a2a3e] rounded-full overflow-hidden">
                 <div
                   className="h-full bg-gradient-to-r from-cyan-400 to-blue-500"
@@ -470,7 +475,7 @@ export function DashboardScreen({
             {/* Meeting Summary */}
             <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
               <h3 className="text-white text-lg mb-6">Meeting Summary</h3>
-              
+
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Title:</span>
@@ -484,22 +489,57 @@ export function DashboardScreen({
 
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Session ID:</span>
-                  <span className="text-white">{sessionId ? sessionId.slice(0, 8) : '--'}</span>
+                  <span className="text-white font-mono">{sessionId ? sessionId.slice(0, 8) : '--'}</span>
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400">Live Captions:</span>
-                  <span className={captionsActive ? 'text-green-400' : 'text-gray-300'}>
-                    {captionsActive ? 'On' : 'Off'}
+                  <span className="text-gray-400">Bot Status:</span>
+                  <span className={
+                    botStatus === 'connected' ? 'text-green-400' :
+                    botStatus === 'joining' ? 'text-yellow-400' :
+                    botStatus === 'degraded' ? 'text-orange-400' :
+                    'text-gray-300'
+                  }>
+                    {botStatus === 'connected' ? `Connected` : botStatus}
+                    {botStatus === 'connected' && (
+                      <span className="text-gray-500 text-xs ml-1 font-mono">
+                        ({[
+                          botStreams.audio && 'A',
+                          botStreams.video && 'V',
+                          botStreams.captions && 'C',
+                        ].filter(Boolean).join('+') || 'no streams'})
+                      </span>
+                    )}
                   </span>
                 </div>
               </div>
+
+              {/* End Session button */}
+              {sessionId && (botStatus === 'connected' || botStatus === 'joining') && (
+                <Button
+                  className="mt-6 w-full bg-red-600 hover:bg-red-700 text-white"
+                  onClick={handleEndSession}
+                  disabled={endingSession}
+                >
+                  {endingSession ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Ending Session...
+                    </>
+                  ) : (
+                    <>
+                      <PhoneOff className="w-4 h-4 mr-2" />
+                      End Session
+                    </>
+                  )}
+                </Button>
+              )}
             </div>
 
             {/* Live Alerts */}
             <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
               <h3 className="text-white text-lg mb-6">Live Alerts</h3>
-              
+
               <div className="space-y-4">
                 {alerts.map((alert, index) => (
                   <div key={index} className="flex gap-3">
@@ -531,7 +571,7 @@ export function DashboardScreen({
                 </div>
                 <div className="text-right">
                   <p className="text-gray-400 text-sm">Confidence</p>
-                  <p className="text-2xl text-cyan-400">{toPercent(displayMetrics.emotion.confidence)}%</p>
+                  <p className="text-2xl text-cyan-400 font-mono">{toPercent(displayMetrics.emotion.confidence)}%</p>
                 </div>
               </div>
               <div className="space-y-3">
@@ -539,7 +579,7 @@ export function DashboardScreen({
                   <div key={score.label}>
                     <div className="flex justify-between text-xs text-gray-400 mb-1">
                       <span>{score.label}</span>
-                      <span>{score.value}%</span>
+                      <span className="font-mono">{score.value}%</span>
                     </div>
                     <div className="h-2 bg-[#2a2a3e] rounded-full overflow-hidden">
                       <div className="h-full bg-cyan-400" style={{ width: `${score.value}%` }}></div>
@@ -567,7 +607,7 @@ export function DashboardScreen({
               <div>
                 <div className="flex justify-between text-xs text-gray-400 mb-1">
                   <span>Embedding Shift</span>
-                  <span>{toPercent(displayMetrics.identity.embeddingShift)}%</span>
+                  <span className="font-mono">{toPercent(displayMetrics.identity.embeddingShift)}%</span>
                 </div>
                 <div className="h-2 bg-[#2a2a3e] rounded-full overflow-hidden">
                   <div
@@ -584,7 +624,7 @@ export function DashboardScreen({
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <p className="text-gray-400 text-sm">Authenticity Score</p>
-                  <p className="text-3xl text-white">{toPercent(displayMetrics.deepfake.authenticityScore)}%</p>
+                  <p className="text-3xl text-white font-mono">{toPercent(displayMetrics.deepfake.authenticityScore)}%</p>
                 </div>
                 <div className="text-right">
                   <p className="text-gray-400 text-sm">Risk</p>
@@ -602,84 +642,17 @@ export function DashboardScreen({
               </div>
             </div>
 
-            {/* Live Transcript */}
-            <div className="col-span-2 bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-white text-lg">Live Transcript</h3>
-                <div className="flex items-center gap-2">
-                  {captionsActive ? (
-                    <Button
-                      variant="outline"
-                      className="bg-transparent border-gray-700 text-gray-200 hover:bg-[#2a2a3e]"
-                      onClick={stopCaptions}
-                    >
-                      Stop Captions
-                    </Button>
-                  ) : (
-                    <Button className="bg-cyan-400 hover:bg-cyan-500 text-black" onClick={startCaptions}>
-                      Start Captions
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <p className="text-gray-400 text-sm">
-                Instant captions (interim + final). {sessionId ? 'Streaming from mic.' : 'Create a session to enable.'}
-              </p>
-              {captionsError && <p className="text-red-400 text-xs mt-2">{captionsError}</p>}
-
-              <div className="mt-4 h-48 overflow-y-auto rounded-lg border border-gray-800 bg-[#141427] p-4">
-                {transcriptLines.length === 0 && !transcriptInterim ? (
-                  <p className="text-gray-500 text-sm">No transcript yet. Start captions and speak into your mic.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {transcriptLines.map((line, index) => (
-                      <div key={`${line.ts}-${index}`} className="text-gray-200 text-sm">
-                        <span className="text-gray-500 mr-2">{new Date(line.ts).toLocaleTimeString()}</span>
-                        <span>{line.text}</span>
-                      </div>
-                    ))}
-                    {transcriptInterim ? (
-                      <div className="text-gray-400 text-sm italic">{transcriptInterim}</div>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Recommendations */}
-            <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
-              <h3 className="text-white text-lg mb-3">Recommendations</h3>
-              <p className="text-gray-400 text-sm mb-4">Rules-first suggestions based on transcript + risk signals.</p>
-
-              <div className="space-y-3">
-                {suggestions.length === 0 ? (
-                  <p className="text-gray-500 text-sm">No recommendations yet.</p>
-                ) : (
-                  suggestions.slice(0, 5).map((suggestion, index) => (
-                    <div key={`${suggestion.ts}-${index}`} className="rounded-lg border border-gray-800 bg-[#141427] p-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-gray-200 text-sm font-medium">{suggestion.title}</p>
-                        <span className={`text-xs ${getRiskColor(suggestion.severity)}`}>{suggestion.severity}</span>
-                      </div>
-                      <p className="text-gray-400 text-xs mt-1">{suggestion.message}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
             {/* Confidence Layer Scores */}
             <div className="col-span-3 bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
               <h3 className="text-white text-lg mb-2">Confidence Layer Scores</h3>
               <p className="text-gray-400 text-sm mb-6">Live data from AI detection modules</p>
-              
+
               <div className="space-y-5">
                 {confidenceScores.map((score) => (
                   <div key={score.label}>
                     <div className="flex justify-between items-center mb-2">
                       <span className="text-gray-300">{score.label}</span>
-                      <span className="text-white">{score.value}%</span>
+                      <span className="text-white font-mono">{score.value}%</span>
                     </div>
                     <div className="h-2 bg-[#2a2a3e] rounded-full overflow-hidden">
                       <div
