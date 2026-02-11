@@ -8,6 +8,14 @@
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@300;400;500;700&display=swap" rel="stylesheet" />
       <title>RealSync User Interface (Copy)</title>
+      <link rel="stylesheet" href="/light-mode.css" />
+      <script>
+        (function() {
+          var t = localStorage.getItem('realsync-theme') || 'system';
+          var dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+        })();
+      </script>
     </head>
 
     <body>

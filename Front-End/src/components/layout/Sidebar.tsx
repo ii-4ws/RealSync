@@ -1,6 +1,8 @@
 import { LayoutDashboard, Video, FileText, Settings, HelpCircle, Mail } from 'lucide-react';
 import logo from 'figma:asset/4401d6799dc4e6061a79080f8825d69ae920f198.png';
+import logoLight from '../../assets/realsync-logo-light.png';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
+import { useTheme } from '../../contexts/ThemeContext';
 
 type Screen = 'login' | 'dashboard' | 'sessions' | 'reports' | 'settings' | 'faq';
 
@@ -10,6 +12,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
+  const { resolvedTheme } = useTheme();
+  const activeLogo = resolvedTheme === 'light' ? logoLight : logo;
   const menuItems = [
     { id: 'dashboard' as Screen, icon: LayoutDashboard, label: 'Dashboard' },
     { id: 'sessions' as Screen, icon: Video, label: 'Sessions' },
@@ -29,7 +33,7 @@ export function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
         onClick={() => onNavigate('dashboard')}
       >
         <div className="flex justify-center">
-          <img src={logo} alt="RealSync Logo" className="w-40 h-auto" />
+          <img src={activeLogo} alt="RealSync Logo" className="w-40 h-auto" />
         </div>
       </div>
 

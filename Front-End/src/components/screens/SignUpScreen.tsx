@@ -3,7 +3,9 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Eye, EyeOff, Lock, Mail, UserPlus, ScanFace, AlertTriangle, CheckCircle2, MailCheck, LogIn, RefreshCw } from 'lucide-react';
 import logo from 'figma:asset/4401d6799dc4e6061a79080f8825d69ae920f198.png';
+import logoLight from '../../assets/realsync-logo-light.png';
 import { supabase } from '../../lib/supabaseClient';
+import { useTheme } from '../../contexts/ThemeContext';
 import { isBlockedDomain } from '../../lib/blockedDomains';
 
 // ── Password strength calculator ─────────────────────────────────────
@@ -28,6 +30,8 @@ interface SignUpScreenProps {
 }
 
 export function SignUpScreen({ onSwitchToLogin }: SignUpScreenProps) {
+  const { resolvedTheme } = useTheme();
+  const activeLogo = resolvedTheme === 'light' ? logoLight : logo;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -133,7 +137,7 @@ export function SignUpScreen({ onSwitchToLogin }: SignUpScreenProps) {
         {/* Left Side — Branding */}
         <div className="hidden lg:block space-y-8">
           <div className="mb-8">
-            <img src={logo} alt="RealSync Logo" className="w-64 h-auto" />
+            <img src={activeLogo} alt="RealSync Logo" className="w-64 h-auto" />
           </div>
 
           <div>
@@ -165,7 +169,7 @@ export function SignUpScreen({ onSwitchToLogin }: SignUpScreenProps) {
           <div className="bg-[#1a1a2e]/80 backdrop-blur-xl rounded-2xl p-8 border border-gray-800/50 shadow-2xl">
             {/* Mobile Logo */}
             <div className="lg:hidden flex justify-center mb-6">
-              <img src={logo} alt="RealSync Logo" className="w-48 h-auto" />
+              <img src={activeLogo} alt="RealSync Logo" className="w-48 h-auto" />
             </div>
 
             {signupComplete ? (

@@ -7,10 +7,11 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Switch } from '../ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { User, Lock, SlidersHorizontal, Cloud, Bell, Upload, ShieldCheck, Loader2, X } from 'lucide-react';
+import { User, Lock, SlidersHorizontal, Cloud, Bell, Upload, ShieldCheck, Loader2, X, Sun, Moon, Monitor } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '../../lib/supabaseClient';
 import { QRCodeSVG } from 'qrcode.react';
+import { useTheme } from '../../contexts/ThemeContext';
 
 type SettingsTab = 'general' | 'privacy' | 'detection' | 'storage' | 'notifications';
 
@@ -206,7 +207,7 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
           {/* Regional Settings */}
           <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
             <h3 className="text-white text-lg mb-4">Regional Settings</h3>
-            
+
             <div className="space-y-4">
               <div>
                 <Label className="text-gray-300 mb-2">Time Zone</Label>
@@ -221,7 +222,7 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
                   </SelectContent>
                 </Select>
               </div>
-              
+
               <div>
                 <Label className="text-gray-300 mb-2">Date Format</Label>
                 <Select defaultValue="mdy">
@@ -235,6 +236,15 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+          </div>
+
+          {/* Appearance */}
+          <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
+            <h3 className="text-white text-lg mb-4">Appearance</h3>
+            <div>
+              <Label className="text-gray-300 mb-3 block">Theme</Label>
+              <ThemeSelector />
             </div>
           </div>
         </div>
@@ -890,6 +900,38 @@ function NotificationSettings() {
           Save Changes
         </Button>
       </div>
+    </div>
+  );
+}
+
+function ThemeSelector() {
+  const { theme, setTheme } = useTheme();
+  const options = [
+    { value: 'light' as const, icon: Sun, label: 'Light' },
+    { value: 'dark' as const, icon: Moon, label: 'Dark' },
+    { value: 'system' as const, icon: Monitor, label: 'System' },
+  ];
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((opt) => {
+        const Icon = opt.icon;
+        const isActive = theme === opt.value;
+        return (
+          <button
+            key={opt.value}
+            onClick={() => setTheme(opt.value)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+              isActive
+                ? 'bg-blue-600 text-white'
+                : 'bg-[#2a2a3e] text-gray-400 hover:bg-gray-800 hover:text-white'
+            }`}
+          >
+            <Icon className="w-4 h-4" />
+            {opt.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

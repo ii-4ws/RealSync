@@ -11,6 +11,7 @@ import { SettingsScreen } from './components/screens/SettingsScreen';
 import { FAQScreen } from './components/screens/FAQScreen';
 import { supabase } from './lib/supabaseClient';
 import { isBlockedDomain } from './lib/blockedDomains';
+import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 
 type Screen = 'login' | 'dashboard' | 'sessions' | 'reports' | 'settings' | 'faq';
 type MeetingType = 'official' | 'business' | 'friends';
@@ -25,6 +26,15 @@ type Profile = {
 };
 
 export default function App() {
+  return (
+    <ThemeProvider>
+      <AppInner />
+    </ThemeProvider>
+  );
+}
+
+function AppInner() {
+  const { resolvedTheme } = useTheme();
   console.log('App component mounted');
 
   const [currentScreen, setCurrentScreen] = useState<Screen>('dashboard');
@@ -272,7 +282,7 @@ export default function App() {
 
   return (
     <>
-      <Toaster position="top-right" theme="dark" richColors />
+      <Toaster position="top-right" theme={resolvedTheme} richColors />
 
       {/* Bot Connecting Loading Screen */}
       {botConnecting && (
