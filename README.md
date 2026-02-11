@@ -1,5 +1,5 @@
 # RealSync
-RealSync is a real-time multi-modal deepfake detection system designed to enhance trust and authenticity in virtual meetings. It analyzes live audio, video, and facial emotion signals using state of the art pre trained AI models to detect voice cloning, synthetic video, and behavioral inconsistencies. The system operates with low latency, preserves user privacy, and is intended for secure use across modern online collaboration platforms.
+RealSync is a real-time multi-modal deepfake detection system designed to enhance trust and authenticity in virtual meetings. It analyzes live audio, video, and facial emotion signals using state of the art pre trained AI models to detect voice cloning, synthetic video, and behavioral inconsistencies. The system operates with low latency, preserves user privacy, and is intended for secure use across modern online collaboration platforms
 
 
 Documentation: 

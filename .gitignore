@@ -1,0 +1,13 @@
+.DS_Store
+node_modules/
+dist/
+build/
+.venv/
+.venv39/
+__pycache__/
+*.pyc
+RealSync-AI-Prototype/output/
+.vscode/
+.env
+.env.*
+*.log

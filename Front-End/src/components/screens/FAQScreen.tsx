@@ -101,7 +101,7 @@ export function FAQScreen({ onNavigate, onSignOut, profilePhoto, userName, userE
 
   return (
     <div className="flex h-screen bg-[#0f0f1e]">
-      <Sidebar currentScreen="help" onNavigate={onNavigate} />
+      <Sidebar currentScreen="faq" onNavigate={onNavigate} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
         <TopBar title="Help & Support" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />
@@ -155,7 +155,7 @@ export function FAQScreen({ onNavigate, onSignOut, profilePhoto, userName, userE
                 <div key={category} className="mb-8">
                   <h2 className="text-white text-xl mb-4">{category}</h2>
                   <div className="space-y-3">
-                    {categoryFaqs.map((faq, index) => {
+                    {categoryFaqs.map((faq) => {
                       const globalIndex = faqs.indexOf(faq);
                       const isExpanded = expandedIndex === globalIndex;
                       

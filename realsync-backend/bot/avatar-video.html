@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html><head><style>body{margin:0;overflow:hidden;background:#000}canvas{display:block}</style></head>
+<body>
+<canvas id="c" width="640" height="480"></canvas>
+<script>
+var canvas = document.getElementById("c");
+var ctx = canvas.getContext("2d");
+var W = 640, H = 480;
+
+// Eye positions detected from the base image
+var LEFT_EYE = { x: 281, y: 128 };
+var RIGHT_EYE = { x: 342, y: 126 };
+var EYE_R = 7;        // radius of each eye dot
+var LINE_Y = 127;     // connecting line y
+var COVER_R = 14;     // radius to cover the original static eyes
+
+// Pre-rendered base frame (baymax + logo, with static eyes removed)
+var baseCanvas = document.createElement("canvas");
+baseCanvas.width = W;
+baseCanvas.height = H;
+var baseCtx = baseCanvas.getContext("2d");
+
+window.loadBaymax = function(b64) {
+  var img = new Image();
+  img.onload = function() {
+    // Draw fitted to canvas (cover mode)
+    var imgAspect = img.width / img.height;
+    var canvasAspect = W / H;
+    var sx, sy, sw, sh;
+    if (imgAspect > canvasAspect) {
+      sh = img.height; sw = sh * canvasAspect;
+      sx = (img.width - sw) / 2; sy = 0;
+    } else {
+      sw = img.width; sh = sw / canvasAspect;
+      sx = 0; sy = (img.height - sh) / 2;
+    }
+    baseCtx.imageSmoothingEnabled = true;
+    baseCtx.imageSmoothingQuality = "high";
+    baseCtx.drawImage(img, sx, sy, sw, sh, 0, 0, W, H);
+
+    // Remove Gemini watermark
+    var pX = W - 60, pY = H - 50;
+    var s1 = baseCtx.getImageData(W - 70, H - 55, 1, 1).data;
+    var s2 = baseCtx.getImageData(W - 5, H - 5, 1, 1).data;
+    var s3 = baseCtx.getImageData(W - 40, H - 10, 1, 1).data;
+    var p = baseCtx.createLinearGradient(pX, pY, W, H);
+    p.addColorStop(0, "rgb(" + s1[0] + "," + s1[1] + "," + s1[2] + ")");
+    p.addColorStop(0.5, "rgb(" + s3[0] + "," + s3[1] + "," + s3[2] + ")");
+    p.addColorStop(1, "rgb(" + s2[0] + "," + s2[1] + "," + s2[2] + ")");
+    baseCtx.fillStyle = p;
+    baseCtx.fillRect(pX, pY, 60, 50);
+
+    // ── Remove the static eyes from the base image ──
+    // Sample the head color around the eyes to paint over them
+    // Sample a pixel above the left eye (clean head area)
+    var headSample = baseCtx.getImageData(LEFT_EYE.x, LEFT_EYE.y - 20, 1, 1).data;
+    var headColor = "rgb(" + headSample[0] + "," + headSample[1] + "," + headSample[2] + ")";
+
+    // Also sample nearby for better blending
+    var hs2 = baseCtx.getImageData(RIGHT_EYE.x, RIGHT_EYE.y - 18, 1, 1).data;
+    var hs3 = baseCtx.getImageData((LEFT_EYE.x + RIGHT_EYE.x) / 2, LINE_Y - 15, 1, 1).data;
+
+    // Paint over left eye area with radial gradient matching head
+    function coverEye(cx, cy) {
+      var g = baseCtx.createRadialGradient(cx, cy, 0, cx, cy, COVER_R + 4);
+      g.addColorStop(0, headColor);
+      g.addColorStop(0.7, headColor);
+      g.addColorStop(1, "rgba(" + headSample[0] + "," + headSample[1] + "," + headSample[2] + ",0)");
+      baseCtx.fillStyle = g;
+      baseCtx.beginPath();
+      baseCtx.arc(cx, cy, COVER_R + 4, 0, Math.PI * 2);
+      baseCtx.fill();
+    }
+
+    // Cover both eyes and the connecting line
+    // First cover the whole eye region with a wider area
+    var midX = (LEFT_EYE.x + RIGHT_EYE.x) / 2;
+    var regionW = (RIGHT_EYE.x - LEFT_EYE.x) + COVER_R * 2 + 10;
+    var regionH = COVER_R * 2 + 10;
+    var rg = baseCtx.createRadialGradient(midX, LINE_Y, 0, midX, LINE_Y, regionW / 2 + 5);
+    rg.addColorStop(0, "rgb(" + hs3[0] + "," + hs3[1] + "," + hs3[2] + ")");
+    rg.addColorStop(0.8, "rgb(" + hs3[0] + "," + hs3[1] + "," + hs3[2] + ")");
+    rg.addColorStop(1, "rgba(" + hs3[0] + "," + hs3[1] + "," + hs3[2] + ",0)");
+    baseCtx.fillStyle = rg;
+    baseCtx.beginPath();
+    baseCtx.ellipse(midX, LINE_Y, regionW / 2 + 5, regionH / 2 + 5, 0, 0, Math.PI * 2);
+    baseCtx.fill();
+
+    document.title = "BG_READY";
+  };
+  img.src = "data:image/png;base64," + b64;
+};
+
+window.loadLogo = function(b64) {
+  var logo = new Image();
+  logo.onload = function() {
+    // Use full logo (eye + RealSync text), big enough to be readable
+    var lw = 180, lh = lw * (logo.height / logo.width);
+    baseCtx.imageSmoothingEnabled = true;
+    baseCtx.imageSmoothingQuality = "high";
+    // Position: top-left, well inset so Zoom doesn't crop it
+    var lgx = 20, lgy = 15;
+    // Dark rounded backing for contrast
+    baseCtx.save();
+    baseCtx.fillStyle = "rgba(0,0,0,0.45)";
+    baseCtx.beginPath();
+    baseCtx.roundRect(lgx - 12, lgy - 10, lw + 24, lh + 20, 14);
+    baseCtx.fill();
+    baseCtx.restore();
+    baseCtx.globalAlpha = 1.0;
+    baseCtx.drawImage(logo, lgx, lgy, lw, lh);
+    baseCtx.globalAlpha = 1;
+    document.title = "LOGO_READY";
+  };
+  logo.src = "data:image/png;base64," + b64;
+};
+
+// ── Draw animated frame ──
+window.drawFrame = function(t) {
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  // Subtle breathing
+  var breathe = 1 + 0.008 * Math.sin(t * Math.PI / 2);
+  // Subtle sway
+  var sway = 0.002 * Math.sin(t * 2 * Math.PI / 6);
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+
+  // Transform from center
+  ctx.translate(W / 2, H / 2);
+  ctx.rotate(sway);
+  ctx.scale(breathe, breathe);
+  ctx.translate(-W / 2, -H / 2);
+
+  // Draw the base (baymax with eyes removed + logo)
+  ctx.drawImage(baseCanvas, 0, 0);
+
+  // ── Animated eyes ──
+  var lx = LEFT_EYE.x, ly = LEFT_EYE.y;
+  var rx = RIGHT_EYE.x, ry = RIGHT_EYE.y;
+
+  // Blink cycle: 4.5 seconds, blink lasts ~0.25s
+  var blinkCycle = t % 4.5;
+  var eyeScaleY = 1;
+  if (blinkCycle > 4.05 && blinkCycle < 4.275) {
+    eyeScaleY = Math.max(0.08, 1 - (blinkCycle - 4.05) / 0.1);
+  } else if (blinkCycle >= 4.275 && blinkCycle < 4.5) {
+    eyeScaleY = Math.min(1, 0.08 + (blinkCycle - 4.275) / 0.1);
+  }
+
+  // Pupil wander (figure-8 pattern)
+  var wanderT = t / 8 * Math.PI * 2;
+  var px = 2.5 * Math.sin(wanderT) + 1.5 * Math.sin(wanderT * 1.7);
+  var py = 1.2 * Math.cos(wanderT * 0.8) + 0.8 * Math.cos(wanderT * 1.3);
+
+  // Draw both eye dots
+  ctx.save();
+
+  // Apply blink by scaling Y around the eye center line
+  var eyeMidY = (ly + ry) / 2;
+  ctx.translate(0, eyeMidY);
+  ctx.scale(1, eyeScaleY);
+  ctx.translate(0, -eyeMidY);
+
+  // Left eye
+  ctx.fillStyle = "#1a1a1a";
+  ctx.beginPath();
+  ctx.arc(lx, ly, EYE_R, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Right eye
+  ctx.beginPath();
+  ctx.arc(rx, ry, EYE_R, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Connecting line between eyes
+  ctx.strokeStyle = "#1a1a1a";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(lx + EYE_R - 1, ly);
+  ctx.lineTo(rx - EYE_R + 1, ry);
+  ctx.stroke();
+
+  // Pupils (lighter dots inside the eyes, with wander offset)
+  ctx.fillStyle = "#3a3a3a";
+  ctx.beginPath();
+  ctx.arc(lx + px, ly + py, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(rx + px * 0.9, ry + py * 0.9, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tiny highlight on each eye
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.beginPath();
+  ctx.arc(lx - 2, ly - 2.5, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(rx - 2, ry - 2.5, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore(); // blink transform
+
+  ctx.restore(); // main transform (breathe + sway)
+};
+</script>
+</body>
+</html>

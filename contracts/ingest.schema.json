@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RealSync Ingest Messages (Bot/Client → Backend via WS /ws/ingest)",
+  "description": "Frozen v1 contract for all messages sent on the ingest WebSocket channel.",
+  "oneOf": [
+    {
+      "type": "object",
+      "title": "start",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "start" },
+        "sessionId": { "type": "string", "format": "uuid" },
+        "meetingType": { "type": "string", "enum": ["official", "business", "friends"] }
+      }
+    },
+    {
+      "type": "object",
+      "title": "stop",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "stop" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "audio_pcm",
+      "required": ["type", "sampleRate", "channels", "dataB64"],
+      "properties": {
+        "type": { "const": "audio_pcm" },
+        "sampleRate": { "type": "integer", "const": 16000 },
+        "channels": { "type": "integer", "const": 1 },
+        "dataB64": { "type": "string", "description": "Base64-encoded PCM16 audio bytes" },
+        "sourceParticipant": { "type": "string", "description": "Participant name or 'unknown'" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "frame",
+      "required": ["type", "dataB64"],
+      "properties": {
+        "type": { "const": "frame" },
+        "dataB64": { "type": "string", "description": "Base64-encoded JPEG image" },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "capturedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "caption",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "caption" },
+        "text": { "type": "string" },
+        "speaker": { "type": "string" },
+        "ts": { "type": "string", "format": "date-time" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "source_status",
+      "required": ["type", "status"],
+      "properties": {
+        "type": { "const": "source_status" },
+        "status": { "type": "string", "enum": ["connected", "degraded", "disconnected"] },
+        "streams": {
+          "type": "object",
+          "properties": {
+            "audio": { "type": "boolean" },
+            "video": { "type": "boolean" },
+            "captions": { "type": "boolean" }
+          }
+        },
+        "ts": { "type": "string", "format": "date-time" }
+      }
+    }
+  ]
+}

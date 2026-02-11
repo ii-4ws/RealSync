@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html><head><style>body{margin:0;overflow:hidden;background:#000}canvas{display:block}</style></head>
+<body>
+<canvas id="c" width="1280" height="960"></canvas>
+<script>
+var c = document.getElementById("c");
+var ctx = c.getContext("2d");
+ctx.imageSmoothingEnabled = true;
+ctx.imageSmoothingQuality = "high";
+var W = 1280, H = 960;
+
+// Load the Baymax image and draw it fitted to canvas
+var baymax = new Image();
+baymax.onload = function() {
+  // Cover the canvas — crop to fill 640x480
+  var imgAspect = baymax.width / baymax.height;
+  var canvasAspect = W / H;
+  var sx, sy, sw, sh;
+  if (imgAspect > canvasAspect) {
+    // Image is wider — crop sides
+    sh = baymax.height;
+    sw = sh * canvasAspect;
+    sx = (baymax.width - sw) / 2;
+    sy = 0;
+  } else {
+    // Image is taller — crop top/bottom
+    sw = baymax.width;
+    sh = sw / canvasAspect;
+    sx = 0;
+    sy = (baymax.height - sh) / 2;
+  }
+  ctx.drawImage(baymax, sx, sy, sw, sh, 0, 0, W, H);
+
+  // Remove the Gemini sparkle watermark in bottom-right corner
+  // Sample the background color nearby and paint over it
+  // The watermark is roughly in the bottom-right area
+  // Use a gradient patch matching the surrounding teal/green area
+  var patchX = W - 120, patchY = H - 100, patchW = 120, patchH = 100;
+  var patch = ctx.createLinearGradient(patchX, patchY, W, H);
+  // Sample nearby pixels for accurate color
+  var sample1 = ctx.getImageData(W - 140, H - 110, 1, 1).data;
+  var sample2 = ctx.getImageData(W - 10, H - 10, 1, 1).data;
+  var sample3 = ctx.getImageData(W - 80, H - 20, 1, 1).data;
+  patch.addColorStop(0, "rgb(" + sample1[0] + "," + sample1[1] + "," + sample1[2] + ")");
+  patch.addColorStop(0.5, "rgb(" + sample3[0] + "," + sample3[1] + "," + sample3[2] + ")");
+  patch.addColorStop(1, "rgb(" + sample2[0] + "," + sample2[1] + "," + sample2[2] + ")");
+  ctx.fillStyle = patch;
+  ctx.fillRect(patchX, patchY, patchW, patchH);
+
+  document.title = "BG_DONE";
+};
+baymax.onerror = function() { document.title = "BG_ERROR"; };
+
+// Will be set by Puppeteer
+window.setBaymaxSrc = function(b64) {
+  baymax.src = "data:image/png;base64," + b64;
+};
+
+// Draw logo on chest
+window.drawLogo = function(b64) {
+  var logo = new Image();
+  logo.onload = function() {
+    // Place logo on chest area — centered, subtle
+    var lw = 200, lh = lw * (logo.height / logo.width);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.globalAlpha = 0.85;
+    ctx.drawImage(logo, 24, 24, lw, lh);
+    ctx.globalAlpha = 1;
+    document.title = "LOGO_DONE";
+  };
+  logo.src = "data:image/png;base64," + b64;
+};
+</script>
+</body>
+</html>

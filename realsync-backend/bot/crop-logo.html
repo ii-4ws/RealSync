@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html><body>
+<canvas id="c"></canvas>
+<script>
+var img = new Image();
+img.onload = function() {
+  // Original is 343x239. Eye portion is rows 0-161 (gap at row 162+)
+  // Crop to rows 0-160 to get just the eye
+  var cropH = 161;
+  var c = document.getElementById("c");
+  c.width = img.width;
+  c.height = cropH;
+  var ctx = c.getContext("2d");
+  ctx.drawImage(img, 0, 0, img.width, cropH, 0, 0, img.width, cropH);
+  // Signal done with the data URL
+  document.title = c.toDataURL("image/png");
+};
+img.src = "../../Front-End/src/assets/4401d6799dc4e6061a79080f8825d69ae920f198.png";
+</script>
+</body></html>
