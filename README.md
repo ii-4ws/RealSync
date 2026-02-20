@@ -10,6 +10,8 @@ System Requirement Specification Report:  https://uowmailedu-my.sharepoint.com/:
 
 Software Design Document: https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQDtdWy1OKUNTow_7sCKDNepAXkpVFV28Ym2ni09eXRf7K4?e=XzArXe
 
+Test Plan Document: https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQDpxaGtBplyTYSNaNpo3R_TARupiSW0pfMUG60z8l-3Blk?e=WeDoFe
+
 
 HOLY COMMANDMENTS: 
 
