@@ -4,11 +4,12 @@ RealSync is a real-time multi-modal deepfake detection system designed to enhanc
 
 Documentation: 
 
-Planning & Feasibility Report: https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQAIzhceCm-JQq4fmycYPERKAafEJKbEjrJa_RMJbcLagPk?e=SPV7Sa
+Planning & Feasibility Report: [https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQAIzhceCm-JQq4fmycYPERKAafEJKbEjrJa_RMJbcLagPk?e=SPV7Sa](https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQB-y7NaPSVFTYkDRfx-MY6HAetIZkaZKe0LuJSueI8k6Xw?e=8l3eO9)
 
-System Requirement Specification Report:  https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQAcvhZLncsMTqreFNkC16oKATr2TuvnmkM4b7EMPNfzQ3g?e=ADjc1I
+System Requirement Specification Report:  [https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQAcvhZLncsMTqreFNkC16oKATr2TuvnmkM4b7EMPNfzQ3g?e=ADjc1I
+](https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQCQLfdqI4aKSpMCaaYdvWpwAWQgTwSk6pr14u5uJc13UH8?e=QdGpSf)
 
-Software Design Document: https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQDtdWy1OKUNTow_7sCKDNepAXkpVFV28Ym2ni09eXRf7K4?e=XzArXe
+Software Design Document: [https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQDtdWy1OKUNTow_7sCKDNepAXkpVFV28Ym2ni09eXRf7K4?e=XzArXe](https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQAkXXS4LbskRZQEcGOkymg1AUnCN50E2p9E1tkkVJnZ3U0?e=qP4h31)
 
 Test Plan Document: https://uowmailedu-my.sharepoint.com/:b:/g/personal/ma611_uowmail_edu_au/IQDpxaGtBplyTYSNaNpo3R_TARupiSW0pfMUG60z8l-3Blk?e=WeDoFe
 
