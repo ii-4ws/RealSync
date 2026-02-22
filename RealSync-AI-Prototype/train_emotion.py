@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """
-Train emotion recognition model using FER2013 + ExpW datasets.
+Train emotion recognition model using FER2013 + AffectNet datasets.
 
 Usage:
-    python train_emotion.py
+    python train_emotion.py                     # train on FER2013 + AffectNet
     python train_emotion.py --fer-only          # train on FER2013 only (quick test)
     python train_emotion.py --epochs 30         # custom epoch count
     python train_emotion.py --batch-size 16     # smaller batch for low RAM
@@ -11,7 +11,8 @@ Usage:
 Expects data at:
     data/fer2013/train/       (FER2013 images sorted by emotion folder)
     data/fer2013/test/        (FER2013 test split)
-    data/ExpW/                (ExpW images + label/label.lst)
+    data/affectnet/Train/     (AffectNet train images sorted by emotion folder)
+    data/affectnet/Test/      (AffectNet test images sorted by emotion folder)
 
 Outputs:
     src/models/emotion_weights.pth
@@ -27,7 +28,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, ConcatDataset, WeightedRandomSampler
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from torchvision import transforms, models
 from PIL import Image
 from sklearn.metrics import accuracy_score, classification_report
@@ -35,7 +36,7 @@ from sklearn.metrics import accuracy_score, classification_report
 # Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FER2013_DIR = os.path.join(BASE_DIR, 'data', 'fer2013')
-EXPW_DIR = os.path.join(BASE_DIR, 'data', 'ExpW')
+AFFECTNET_DIR = os.path.join(BASE_DIR, 'data', 'affectnet')
 WEIGHTS_OUT = os.path.join(BASE_DIR, 'src', 'models', 'emotion_weights.pth')
 
 # Emotion labels (shared across both datasets)
@@ -44,28 +45,39 @@ EMOTION_LABELS = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutr
 EMOTION_TO_IDX = {label: idx for idx, label in enumerate(EMOTION_LABELS)}
 NUM_CLASSES = 7
 
-# ExpW uses integer labels in its label file:
-# 0=angry, 1=disgust, 2=fear, 3=happy, 4=sad, 5=surprise, 6=neutral
-# This matches our EMOTION_LABELS order exactly.
+# AffectNet folder names differ from FER2013 — this maps them to our labels
+AFFECTNET_FOLDER_MAP = {
+    'anger': 'angry',
+    'disgust': 'disgust',
+    'fear': 'fear',
+    'happy': 'happy',
+    'sad': 'sad',
+    'surprise': 'surprise',
+    'neutral': 'neutral',
+    # 'contempt' is skipped — not in our 7-class set
+}
 
 # Training config (optimized for M2 8GB)
-IMG_SIZE = 96
-BATCH_SIZE = 32
-EPOCHS = 25
-LEARNING_RATE = 0.0003
+IMG_SIZE = 128
+BATCH_SIZE = 16
+EPOCHS = 40
+LEARNING_RATE = 0.0001
 DEVICE = 'mps' if torch.backends.mps.is_available() else 'cpu'
 NUM_WORKERS = 2
 
 
-# Data augmentation
+# Data augmentation (stronger augmentation for better generalization)
 train_transform = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.Resize((IMG_SIZE + 16, IMG_SIZE + 16)),
+    transforms.RandomCrop(IMG_SIZE),
     transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2),
+    transforms.RandomRotation(15),
+    transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2),
+    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406],
                          std=[0.229, 0.224, 0.225]),
+    transforms.RandomErasing(p=0.15, scale=(0.02, 0.15)),
 ])
 
 val_transform = transforms.Compose([
@@ -125,51 +137,47 @@ class FER2013Dataset(Dataset):
         return img, label
 
 
-class ExpWDataset(Dataset):
+class AffectNetDataset(Dataset):
     """
-    Load ExpW dataset.
-    Expects:
-        ExpW/origin/             (image files)
-        ExpW/label/label.lst     (label file: filename face_id x y w h label)
+    Load AffectNet from image folder structure:
+        affectnet/Train/anger/*.png
+        affectnet/Train/happy/*.png
+        ...
+    Folder names are mapped to our 7-class labels via AFFECTNET_FOLDER_MAP.
+    'contempt' folder is skipped.
     """
-    def __init__(self, root_dir, transform=None):
+    def __init__(self, root_dir, split='Train', transform=None):
         self.transform = transform
         self.samples = []
 
-        image_dir = os.path.join(root_dir, 'origin')
-        label_file = os.path.join(root_dir, 'label', 'label.lst')
-
-        if not os.path.isfile(label_file):
+        split_dir = os.path.join(root_dir, split)
+        if not os.path.isdir(split_dir):
             raise FileNotFoundError(
-                f"ExpW label file not found at {label_file}\n"
-                f"Download from Kaggle: Expression in-the-Wild (ExpW) Dataset\n"
-                f"Extract so the structure is: data/ExpW/origin/*.jpg + data/ExpW/label/label.lst"
+                f"AffectNet {split} directory not found at {split_dir}\n"
+                f"Download from: https://www.kaggle.com/datasets/mstjebashazida/affectnet\n"
+                f"Extract so the structure is: data/affectnet/Train/<emotion>/*.png"
             )
 
-        # Parse label file - each line: filename face_id x y w h label
-        seen = set()
-        with open(label_file, 'r') as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) < 7:
-                    continue
+        for folder_name in sorted(os.listdir(split_dir)):
+            folder_path = os.path.join(split_dir, folder_name)
+            if not os.path.isdir(folder_path):
+                continue
 
-                filename = parts[0]
-                label = int(parts[6])
+            # Map AffectNet folder name to our emotion label
+            mapped = AFFECTNET_FOLDER_MAP.get(folder_name.lower())
+            if mapped is None:
+                continue  # skip contempt and any unknown folders
 
-                # Only use first face per image, skip duplicates
-                if filename in seen:
-                    continue
-                seen.add(filename)
+            label = EMOTION_TO_IDX[mapped]
 
-                if label < 0 or label >= NUM_CLASSES:
-                    continue
+            for img_name in os.listdir(folder_path):
+                if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    self.samples.append((
+                        os.path.join(folder_path, img_name),
+                        label
+                    ))
 
-                img_path = os.path.join(image_dir, filename)
-                if os.path.isfile(img_path):
-                    self.samples.append((img_path, label))
-
-        print(f"  ExpW: {len(self.samples)} images")
+        print(f"  AffectNet {split}: {len(self.samples)} images")
 
     def __len__(self):
         return len(self.samples)
@@ -179,7 +187,6 @@ class ExpWDataset(Dataset):
         try:
             img = Image.open(img_path).convert('RGB')
         except Exception:
-            # Return a blank image on read error rather than crashing
             img = Image.new('RGB', (IMG_SIZE, IMG_SIZE))
         if self.transform:
             img = self.transform(img)
@@ -192,16 +199,20 @@ class EmotionNet(nn.Module):
         super().__init__()
         backbone = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
 
-        # Freeze early layers to save memory and speed up training
-        for param in backbone.features[:14].parameters():
+        # Unfreeze more layers — only freeze first 10 (was 14)
+        # This lets the model learn more face-specific features
+        for param in backbone.features[:10].parameters():
             param.requires_grad = False
 
         self.features = backbone.features
         self.pool = nn.AdaptiveAvgPool2d((1, 1))
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Dropout(0.3),
-            nn.Linear(1280, num_classes),
+            nn.Dropout(0.4),
+            nn.Linear(1280, 256),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, num_classes),
         )
 
     def forward(self, x):
@@ -215,7 +226,10 @@ def get_class_weights(dataset):
     """Compute class weights to handle emotion imbalance."""
     labels = []
     for ds in (dataset.datasets if isinstance(dataset, ConcatDataset) else [dataset]):
-        labels.extend([s[1] for s in ds.samples])
+        if hasattr(ds, 'samples'):
+            labels.extend([s[1] for s in ds.samples])
+        elif hasattr(ds, 'dataset') and hasattr(ds.dataset, 'samples'):
+            labels.extend([ds.dataset.samples[i][1] for i in ds.indices])
 
     counts = np.bincount(labels, minlength=NUM_CLASSES).astype(np.float32)
     # Inverse frequency weighting
@@ -243,21 +257,13 @@ def train(args):
     train_datasets.append(fer_train)
     val_datasets.append(fer_val)
 
-    # ExpW (unless --fer-only)
+    # AffectNet (unless --fer-only)
     if not args.fer_only:
         try:
-            expw_full = ExpWDataset(EXPW_DIR, transform=train_transform)
-            # Split ExpW: 90% train, 10% val
-            n_val = int(len(expw_full) * 0.1)
-            n_train = len(expw_full) - n_val
-            expw_train, expw_val = torch.utils.data.random_split(
-                expw_full, [n_train, n_val],
-                generator=torch.Generator().manual_seed(42)
-            )
-            # Wrap val split with val_transform
-            expw_val.dataset = ExpWDataset(EXPW_DIR, transform=val_transform)
-            train_datasets.append(expw_train)
-            val_datasets.append(expw_val)
+            affect_train = AffectNetDataset(AFFECTNET_DIR, split='Train', transform=train_transform)
+            affect_val = AffectNetDataset(AFFECTNET_DIR, split='Test', transform=val_transform)
+            train_datasets.append(affect_train)
+            val_datasets.append(affect_val)
         except FileNotFoundError as e:
             print(f'\n  WARNING: {e}')
             print('  Continuing with FER2013 only.\n')
@@ -295,13 +301,14 @@ def train(args):
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'Total params: {total_params:,} | Trainable: {trainable_params:,}\n')
 
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = optim.Adam(
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
+    optimizer = optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=args.learning_rate,
+        weight_decay=0.01,
     )
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=3, factor=0.5, min_lr=1e-6
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=10, T_mult=2, eta_min=1e-6
     )
 
     best_val_acc = 0.0
@@ -351,7 +358,7 @@ def train(args):
 
         val_acc = accuracy_score(val_labels_list, val_preds)
         avg_val_loss = val_loss / len(val_loader)
-        scheduler.step(avg_val_loss)
+        scheduler.step(epoch)
 
         current_lr = optimizer.param_groups[0]['lr']
         print(f'Epoch {epoch+1}/{args.epochs} | '
@@ -410,7 +417,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train emotion recognition model')
     parser.add_argument('--fer-only', action='store_true',
-                        help='Train on FER2013 only (skip ExpW)')
+                        help='Train on FER2013 only (skip AffectNet)')
     parser.add_argument('--epochs', type=int, default=EPOCHS,
                         help=f'Number of epochs (default: {EPOCHS})')
     parser.add_argument('--batch-size', type=int, default=BATCH_SIZE,
