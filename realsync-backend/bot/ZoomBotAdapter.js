@@ -62,6 +62,15 @@ class ZoomBotAdapter {
    * @param {boolean} [opts.debugScreenshots=false] - Save screenshots at each step
    */
   constructor({ meetingUrl, displayName, onIngestMessage, headless, debugScreenshots }) {
+    // Validate meeting URL points to a Zoom domain
+    try {
+      const parsed = new URL(meetingUrl);
+      if (parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.zoom.us')) {
+        throw new Error('Invalid host');
+      }
+    } catch {
+      throw new Error(`[ZoomBot] Invalid meeting URL — must be a https://*.zoom.us link: ${meetingUrl}`);
+    }
     this.meetingUrl = meetingUrl;
     this.displayName = displayName || DEFAULT_DISPLAY_NAME;
     this.onIngestMessage = onIngestMessage;
@@ -492,6 +501,11 @@ class ZoomBotAdapter {
         "notifications",
       ]);
 
+      // Validate URL before navigation to prevent SSRF
+      const meetingParsed = new URL(this.meetingUrl);
+      if (meetingParsed.protocol !== 'https:' || !meetingParsed.hostname.endsWith('.zoom.us')) {
+        throw new Error(`[ZoomBot] Refused to navigate — not a Zoom URL: ${this.meetingUrl}`);
+      }
       console.log(`[ZoomBot] Navigating to: ${this.meetingUrl}`);
       await this.page.goto(this.meetingUrl, {
         waitUntil: "networkidle2",
@@ -571,6 +585,11 @@ class ZoomBotAdapter {
     if (meetingIdMatch) {
       const meetingId = meetingIdMatch[1];
       const directUrl = `https://app.zoom.us/wc/${meetingId}/join${pwdMatch ? "?pwd=" + pwdMatch[1] : ""}`;
+      // Validate constructed URL to prevent SSRF
+      const parsedUrl = new URL(directUrl);
+      if (parsedUrl.protocol !== 'https:' || parsedUrl.hostname !== 'app.zoom.us') {
+        throw new Error(`[ZoomBot] Refused to navigate — URL does not point to app.zoom.us: ${directUrl}`);
+      }
       console.log(`[ZoomBot] Navigating directly to web client: ${directUrl}`);
       await page.goto(directUrl, { waitUntil: "networkidle2", timeout: 30000 });
     } else {

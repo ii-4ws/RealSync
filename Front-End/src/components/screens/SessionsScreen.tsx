@@ -38,7 +38,9 @@ interface SessionsScreenProps {
 function isValidZoomUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.hostname.includes('zoom.us') || parsed.hostname.includes('zoom.com');
+    return (parsed.hostname === 'zoom.us' || parsed.hostname.endsWith('.zoom.us') ||
+            parsed.hostname === 'zoom.com' || parsed.hostname.endsWith('.zoom.com')) &&
+           parsed.protocol === 'https:';
   } catch {
     return false;
   }
