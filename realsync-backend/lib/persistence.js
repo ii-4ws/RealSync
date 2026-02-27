@@ -10,33 +10,7 @@
  * allows the rest of the pipeline to function during local development.
  */
 
-let supabase = null;
-
-function getClient() {
-  if (supabase) return supabase;
-
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_KEY;
-
-  if (!url || !key) {
-    console.warn(
-      "[persistence] SUPABASE_URL or SUPABASE_SERVICE_KEY not set — persistence disabled."
-    );
-    return null;
-  }
-
-  try {
-    const { createClient } = require("@supabase/supabase-js");
-    supabase = createClient(url, key);
-    console.log("[persistence] Supabase client initialized.");
-    return supabase;
-  } catch (err) {
-    console.warn(
-      `[persistence] Failed to init Supabase client: ${err?.message ?? err}`
-    );
-    return null;
-  }
-}
+const { getClient } = require("./supabaseClient");
 
 /* ------------------------------------------------------------------ */
 /*  Sessions                                                           */

@@ -39,7 +39,7 @@ const faqs: FAQItem[] = [
   {
     category: 'Detection & Security',
     question: 'How accurate is the deepfake detection?',
-    answer: 'RealSync uses state-of-the-art AI models with over 95% accuracy in detecting deepfakes. The system continuously learns and improves from new data. You can adjust sensitivity settings in Settings → Detection Settings.'
+    answer: 'RealSync uses state-of-the-art AI models with over 95% accuracy in detecting deepfakes. The system continuously learns and improves from new data. You can adjust sensitivity settings in Settings \u2192 Detection Settings.'
   },
   {
     category: 'Detection & Security',
@@ -49,7 +49,7 @@ const faqs: FAQItem[] = [
   {
     category: 'Privacy & Data',
     question: 'Is my meeting data stored or recorded?',
-    answer: 'Meeting data is only stored if you enable recording in your settings. All analysis data is encrypted and stored securely in the cloud. You have full control over data retention policies in Settings → Cloud Storage.'
+    answer: 'Meeting data is only stored if you enable recording in your settings. All analysis data is encrypted and stored securely in the cloud. You have full control over data retention policies in Settings \u2192 Cloud Storage.'
   },
   {
     category: 'Privacy & Data',
@@ -59,17 +59,17 @@ const faqs: FAQItem[] = [
   {
     category: 'Privacy & Data',
     question: 'Can I delete my meeting data?',
-    answer: 'Yes, you can delete individual meeting records or bulk delete data from the Sessions screen. You can also configure automatic deletion policies in Settings → Cloud Storage.'
+    answer: 'Yes, you can delete individual meeting records or bulk delete data from the Sessions screen. You can also configure automatic deletion policies in Settings \u2192 Cloud Storage.'
   },
   {
     category: 'Account & Settings',
     question: 'How do I adjust detection sensitivity?',
-    answer: 'Go to Settings → Detection Settings to adjust sensitivity levels. Higher sensitivity catches more potential threats but may increase false positives. We recommend starting at 75% and adjusting based on your needs.'
+    answer: 'Go to Settings \u2192 Detection Settings to adjust sensitivity levels. Higher sensitivity catches more potential threats but may increase false positives. We recommend starting at 75% and adjusting based on your needs.'
   },
   {
     category: 'Account & Settings',
     question: 'Can I customize alert notifications?',
-    answer: 'Yes, navigate to Settings → Notifications to customize email and push notifications. You can choose to receive real-time alerts, weekly summaries, or only critical security updates.'
+    answer: 'Yes, navigate to Settings \u2192 Notifications to customize email and push notifications. You can choose to receive real-time alerts, weekly summaries, or only critical security updates.'
   },
   {
     category: 'Troubleshooting',
@@ -79,7 +79,7 @@ const faqs: FAQItem[] = [
   {
     category: 'Troubleshooting',
     question: 'The system is showing false positives. What can I do?',
-    answer: 'Lower the detection sensitivity in Settings → Detection Settings. False positives can occur with poor lighting, low camera quality, or unusual backgrounds. You can also disable specific detection modes if they\'re causing issues.'
+    answer: 'Lower the detection sensitivity in Settings \u2192 Detection Settings. False positives can occur with poor lighting, low camera quality, or unusual backgrounds. You can also disable specific detection modes if they\'re causing issues.'
   },
 ];
 
@@ -96,6 +96,13 @@ export function FAQScreen({ onNavigate, onSignOut, profilePhoto, userName, userE
     faq.answer.toLowerCase().includes(searchQuery.toLowerCase()) ||
     faq.category.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // Collapse any expanded item when search query changes
+  const [prevQuery, setPrevQuery] = useState('');
+  if (searchQuery !== prevQuery) {
+    setPrevQuery(searchQuery);
+    if (expandedIndex !== null) setExpandedIndex(null);
+  }
 
   const categories = Array.from(new Set(faqs.map(faq => faq.category)));
 
@@ -161,7 +168,7 @@ export function FAQScreen({ onNavigate, onSignOut, profilePhoto, userName, userE
                       
                       return (
                         <div
-                          key={globalIndex}
+                          key={faq.question}
                           className="bg-[#1a1a2e] border border-gray-800 rounded-lg overflow-hidden"
                         >
                           <button

@@ -76,7 +76,7 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
   const [scheduledSessions, setScheduledSessions] = useState<ScheduledSession[]>([]);
   const scheduledTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  // Countdown ticker — re-render every 30s to update countdowns
+  // Countdown ticker -- re-render every 30s to update countdowns
   const [, setTick] = useState(0);
   useEffect(() => {
     if (scheduledSessions.length === 0) return;
@@ -111,7 +111,7 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
     (entry: ScheduledSession) => {
       const delayMs = new Date(entry.scheduledAt).getTime() - Date.now();
       if (delayMs <= 0) {
-        // Time has already passed — join now
+        // Time has already passed -- join now
         joinMeeting(entry.sessionId, entry.meetingUrl, entry.title, entry.meetingType);
         setScheduledSessions((prev) =>
           prev.map((s) => (s.sessionId === entry.sessionId ? { ...s, status: 'joining' as const } : s)),
@@ -185,7 +185,7 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
       const hasSchedule = !!scheduledAt;
 
       if (hasUrl && hasSchedule) {
-        // Scheduled meeting — add to scheduled list, auto-join at time
+        // Scheduled meeting -- add to scheduled list, auto-join at time
         const entry: ScheduledSession = {
           sessionId: data.sessionId,
           title: meetingName.trim(),
@@ -196,13 +196,13 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
         };
         setScheduledSessions((prev) => [...prev, entry]);
         scheduleAutoJoin(entry);
-        toast.success(`Session scheduled — bot will join at ${new Date(scheduledAt).toLocaleTimeString()}`);
+        toast.success(`Session scheduled -- bot will join at ${new Date(scheduledAt).toLocaleTimeString()}`);
       } else if (hasUrl) {
-        // Immediate join — create + join + navigate to dashboard
-        toast.success('Session created — joining meeting...');
+        // Immediate join -- create + join + navigate to dashboard
+        toast.success('Session created -- joining meeting...');
         await joinMeeting(data.sessionId, meetingUrl.trim(), meetingName.trim(), meetingType);
       } else {
-        // No URL — just create session and go to dashboard (local mic mode)
+        // No URL -- just create session and go to dashboard (local mic mode)
         toast.success('Session started');
         onStartSession?.(data.sessionId, meetingName.trim(), meetingType);
       }
@@ -245,7 +245,7 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
     toast('Scheduled session cancelled');
   };
 
-  // ── Real session history from API ──────────────────────────────────
+  // -- Real session history from API --
   interface HistorySession {
     id: string;
     title: string;
@@ -274,13 +274,18 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
           setHistorySessions(sessions);
         }
       } catch {
-        // Silently fail — empty list
+        // Silently fail -- empty list
       } finally {
         if (!cancelled) setHistoryLoading(false);
       }
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // Reset page when data changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [historySessions.length]);
 
   // Paginated slice
   const totalPages = Math.max(1, Math.ceil(historySessions.length / PAGE_SIZE));
@@ -338,7 +343,7 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
             {historyLoading ? (
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="w-6 h-6 text-cyan-400 animate-spin" />
-                <span className="ml-3 text-gray-400">Loading sessions…</span>
+                <span className="ml-3 text-gray-400">Loading sessions...</span>
               </div>
             ) : historySessions.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-gray-500">
@@ -432,7 +437,7 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
                 {/* Pagination */}
                 <div className="p-6 border-t border-gray-800 flex justify-between items-center">
                   <p className="text-gray-400 text-sm">
-                    Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, historySessions.length)} of {historySessions.length} sessions
+                    Showing {(currentPage - 1) * PAGE_SIZE + 1}--{Math.min(currentPage * PAGE_SIZE, historySessions.length)} of {historySessions.length} sessions
                   </p>
                   <div className="flex gap-2">
                     <Button
@@ -573,13 +578,13 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
                 )}
               </div>
 
-              {/* Scheduled Time — only shown when a Zoom URL is provided */}
+              {/* Scheduled Time -- only shown when a Zoom URL is provided */}
               {meetingUrl.trim() && isValidZoomUrl(meetingUrl.trim()) && (
                 <div className="space-y-2">
                   <Label className="text-gray-400 text-sm flex items-center gap-2">
                     <Clock className="w-4 h-4 text-cyan-400" />
                     Schedule for Later
-                    <span className="text-gray-600 text-xs">(optional — leave blank to join now)</span>
+                    <span className="text-gray-600 text-xs">(optional -- leave blank to join now)</span>
                   </Label>
                   <Input
                     type="datetime-local"

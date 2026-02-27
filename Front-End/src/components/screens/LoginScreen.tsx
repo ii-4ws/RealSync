@@ -6,6 +6,7 @@ import logo from 'figma:asset/4401d6799dc4e6061a79080f8825d69ae920f198.png';
 import logoLight from '../../assets/realsync-logo-light.png';
 import { supabase } from '../../lib/supabaseClient';
 import { useTheme } from '../../contexts/ThemeContext';
+import { toast } from 'sonner';
 
 interface LoginScreenProps {
   onSwitchToSignUp?: () => void;
@@ -29,7 +30,7 @@ export function LoginScreen({ onSwitchToSignUp, oauthError, onClearOAuthError }:
   const [mfaError, setMfaError] = useState<string | null>(null);
   const [mfaVerifying, setMfaVerifying] = useState(false);
 
-  // ── OAuth SSO handlers ──
+  // -- OAuth SSO handlers --
   const [formError, setFormError] = useState<string | null>(null);
 
   const handleGoogleLogin = async () => {
@@ -147,7 +148,7 @@ export function LoginScreen({ onSwitchToSignUp, oauthError, onClearOAuthError }:
       });
       if (verifyError) throw verifyError;
 
-      // Success — onAuthStateChange in App.tsx will handle navigation
+      // Success -- onAuthStateChange in App.tsx will handle navigation
     } catch (err: unknown) {
       setMfaError(err instanceof Error ? err.message : 'Invalid code. Please try again.');
     } finally {
@@ -236,7 +237,7 @@ export function LoginScreen({ onSwitchToSignUp, oauthError, onClearOAuthError }:
             </div>
 
             {mfaRequired ? (
-              /* ── MFA Challenge Screen ── */
+              /* -- MFA Challenge Screen -- */
               <>
                 <div className="text-center mb-8">
                   <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-cyan-400 to-blue-500 rounded-2xl mb-4">
@@ -287,12 +288,12 @@ export function LoginScreen({ onSwitchToSignUp, oauthError, onClearOAuthError }:
                     }}
                     className="w-full text-center text-gray-400 text-sm hover:text-gray-300 transition-colors"
                   >
-                    ← Back to sign in
+                    \u2190 Back to sign in
                   </button>
                 </div>
               </>
             ) : (
-              /* ── Login Form ── */
+              /* -- Login Form -- */
               <>
                 {/* Header */}
                 <div className="text-center mb-8">
@@ -333,7 +334,24 @@ export function LoginScreen({ onSwitchToSignUp, oauthError, onClearOAuthError }:
                   <div>
                     <div className="flex justify-between items-center mb-2">
                       <label className="text-gray-300 text-sm">Password</label>
-                      <button className="text-cyan-400 text-sm hover:text-cyan-300 transition-colors">
+                      <button
+                        onClick={async () => {
+                          if (!email.trim()) {
+                            setEmailError('Enter your email first to reset password.');
+                            return;
+                          }
+                          const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+                            redirectTo: window.location.origin,
+                          });
+                          if (error) {
+                            setFormError(error.message);
+                          } else {
+                            setFormError(null);
+                            toast.success('Password reset email sent! Check your inbox.');
+                          }
+                        }}
+                        className="text-cyan-400 text-sm hover:text-cyan-300 transition-colors"
+                      >
                         Forgot Password?
                       </button>
                     </div>

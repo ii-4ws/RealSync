@@ -25,8 +25,6 @@ type Profile = {
 };
 
 export default function App() {
-  console.log('App component mounted');
-
   const [currentScreen, setCurrentScreen] = useState<Screen>('dashboard');
   const [authView, setAuthView] = useState<'login' | 'signup'>('login');
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
@@ -49,8 +47,6 @@ export default function App() {
     import.meta.env.VITE_PROTOTYPE_MODE === '1' ||
     !import.meta.env.VITE_SUPABASE_URL ||
     !import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-  console.log('Current state:', { currentScreen, prototypeMode: prototypeModeEnabled, loadingAuth, loadingProfile });
 
   useEffect(() => {
     // Skip authentication in prototype mode
@@ -80,13 +76,13 @@ export default function App() {
 
     initializeSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
-      // ── OAuth domain guard ──────────────────────────────────────
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, nextSession) => {
+      // -- OAuth domain guard --
       // Block personal email domains (gmail, yahoo, etc.) even when
       // the user authenticates via Google/Microsoft OAuth.
       if (event === 'SIGNED_IN' && nextSession?.user?.email) {
         if (isBlockedDomain(nextSession.user.email)) {
-          supabase.auth.signOut();
+          await supabase.auth.signOut();
           setOauthError(
             'Personal email providers (Gmail, Yahoo, Outlook, etc.) are not accepted. Please sign in with your corporate or institutional email.'
           );
@@ -200,7 +196,6 @@ export default function App() {
   }, [botConnecting]);
 
   if (loadingAuth || (session?.user?.id && loadingProfile)) {
-    console.log('Showing loading screen');
     return (
       <div className="min-h-screen bg-[#0f0f1e] flex items-center justify-center text-gray-300">
         Loading...
@@ -211,15 +206,12 @@ export default function App() {
   // In prototype mode, skip authentication
   if (!prototypeModeEnabled && !session) {
     if (authView === 'signup') {
-      console.log('Showing signup screen');
       return <SignUpScreen onSwitchToLogin={() => setAuthView('login')} />;
     }
-    console.log('Showing login screen');
     return <LoginScreen onSwitchToSignUp={() => setAuthView('signup')} oauthError={oauthError} onClearOAuthError={() => setOauthError(null)} />;
   }
 
   if (!prototypeModeEnabled && needsOnboarding) {
-    console.log('Showing onboarding');
     return (
       <CompleteProfileScreen
         userId={session.user.id}
@@ -228,8 +220,6 @@ export default function App() {
       />
     );
   }
-
-  console.log('Rendering main app, screen:', currentScreen);
 
   const handleStartSession = (sessionId: string, title: string, meetingType: MeetingType) => {
     setActiveSessionId(sessionId);
@@ -274,7 +264,7 @@ export default function App() {
               <p className="text-gray-500 text-xs">
                 The RealSync bot is joining your Zoom meeting.
                 <br />
-                This may take a few seconds…
+                This may take a few seconds...
               </p>
             </div>
 

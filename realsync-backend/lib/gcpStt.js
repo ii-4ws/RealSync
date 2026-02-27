@@ -18,9 +18,9 @@ function createStubStream({ onTranscript }) {
   let timer = null;
   const samples = [
     "hello everyone, let's start the meeting",
-    "please share the invoice by end of day",
-    "this is urgent, we need to transfer funds",
-    "can you send me the OTP code",
+    "please share the report by end of day",
+    "let's review the project timeline now",
+    "can you confirm the schedule for next week",
   ];
 
   const start = () => {

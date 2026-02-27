@@ -143,7 +143,11 @@ class AudioDeepfakeNet(nn.Module):
 
     def forward(self, x):
         x = self.features(x)
-        x = self.global_pool(x.cpu()).to(x.device) if x.device.type == 'mps' else self.global_pool(x)
+        original_device = x.device
+        if original_device.type == 'mps':
+            x = self.global_pool(x.cpu()).to(original_device)
+        else:
+            x = self.global_pool(x)
         x = self.classifier(x)
         return x
 

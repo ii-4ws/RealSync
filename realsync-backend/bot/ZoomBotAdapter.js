@@ -213,16 +213,16 @@ class ZoomBotAdapter {
           ctx.fillStyle = bgGrad;
           ctx.fillRect(0, 0, W, H);
 
+          // Center the bot
+          const cx = W / 2;
+          const cy = H / 2 - 10;
+
           // Subtle radial vignette overlay for depth
           const vignette = ctx.createRadialGradient(cx, cy, 50, cx, cy, Math.max(W, H) * 0.7);
           vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
           vignette.addColorStop(1, "rgba(0, 0, 0, 0.35)");
           ctx.fillStyle = vignette;
           ctx.fillRect(0, 0, W, H);
-
-          // Center the bot
-          const cx = W / 2;
-          const cy = H / 2 - 10;
           const scale = 1.8; // Scale up the bot
 
           ctx.save();
@@ -445,9 +445,7 @@ class ZoomBotAdapter {
           "--use-fake-device-for-media-stream", // Use fake camera device
           `--use-file-for-fake-video-capture=${AVATAR_VIDEO_PATH}`, // Animated Baymax avatar as camera feed
           "--autoplay-policy=no-user-gesture-required",
-          "--disable-web-security",
-          "--disable-features=IsolateOrigins",
-          "--disable-site-isolation-trials",
+
           `--window-size=${VIEWPORT.width},${VIEWPORT.height}`,
         ],
         defaultViewport: VIEWPORT,

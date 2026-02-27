@@ -180,17 +180,23 @@ export function DashboardScreen({
 
     const connectWebSocket = async () => {
       try {
-        const token = await getAuthToken();
-        const sep = subscribePath.includes('?') ? '&' : '?';
-        const authPath = token ? `${subscribePath}${sep}token=${encodeURIComponent(token)}` : subscribePath;
-        ws = new WebSocket(buildWsUrl(authPath));
+        ws = new WebSocket(buildWsUrl(subscribePath));
       } catch (error) {
         startPolling();
         return;
       }
 
-      ws.onopen = () => {
+      ws.onopen = async () => {
         if (!isActive) return;
+        // Send auth token as the first message instead of URL query param
+        try {
+          const token = await getAuthToken();
+          if (token && ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'auth', token }));
+          }
+        } catch {
+          // Continue without auth in prototype mode
+        }
         setWsConnected(true);
         setMetricsError(null);
         stopPolling();
@@ -277,7 +283,7 @@ export function DashboardScreen({
       stopPolling();
       ws?.close();
     };
-  }, [sessionId]);
+  }, [sessionId, onBotConnected]);
 
   /** End session: leave meeting + stop session */
   const handleEndSession = useCallback(async () => {
@@ -369,11 +375,11 @@ export function DashboardScreen({
     return items;
   }, [displayMetrics, alertEvents]);
 
-  const confidenceScores = [
+  const confidenceScores = useMemo(() => [
     { label: 'Audio', value: toPercent(displayMetrics.confidenceLayers.audio), color: 'bg-cyan-400' },
     { label: 'Video', value: toPercent(displayMetrics.confidenceLayers.video), color: 'bg-cyan-400' },
     { label: 'Behavior', value: toPercent(displayMetrics.confidenceLayers.behavior), color: 'bg-orange-400' },
-  ];
+  ], [displayMetrics]);
 
   return (
     <div className="flex h-screen bg-[#0f0f1e]">

@@ -19,6 +19,7 @@ SRC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -28,6 +29,21 @@ from serve.config import PORT, HOST
 from serve.inference import analyze_frame, get_identity_tracker
 
 # ---------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Pre-load models on startup for faster first inference."""
+    print("[app] Pre-loading models...")
+    from serve.inference import _get_mesonet, _get_fer, _get_face_detector
+    _get_face_detector()
+    _get_fer()
+    _get_mesonet()
+    print("[app] Models ready.")
+    yield
+
+# ---------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------
 
@@ -35,6 +51,7 @@ app = FastAPI(
     title="RealSync AI Inference Service",
     description="Real-time frame analysis for deepfake, emotion, and identity detection.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Restrict CORS to the RealSync backend and local development origins.
@@ -131,21 +148,6 @@ async def clear_identity(session_id: str):
     tracker = get_identity_tracker()
     tracker.clear_session(session_id)
     return {"ok": True, "sessionId": session_id}
-
-
-# ---------------------------------------------------------------
-# Startup
-# ---------------------------------------------------------------
-
-@app.on_event("startup")
-async def startup():
-    """Pre-load models on startup for faster first inference."""
-    print("[app] Pre-loading models...")
-    from serve.inference import _get_mesonet, _get_fer, _get_face_detector
-    _get_face_detector()
-    _get_fer()
-    _get_mesonet()
-    print("[app] Models ready.")
 
 
 # ---------------------------------------------------------------

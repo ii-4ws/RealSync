@@ -7,21 +7,27 @@ Uses a simple approach: compute a face embedding from pixel values
 For production, this could be replaced with FaceNet/ArcFace embeddings.
 The interface remains the same regardless of the embedding method.
 """
+import time
 import numpy as np
 from typing import Dict, Tuple, Optional
+
+SESSION_TTL_SECONDS = 3600
 
 
 class IdentityTracker:
     """Track face identity consistency within a session."""
 
-    def __init__(self, embedding_dim: int = 128):
+    def __init__(self, embedding_dim: int = 128, downscale: int = 32):
         self.embedding_dim = embedding_dim
+        self.downscale = downscale
         # session_id -> { face_id -> baseline_embedding }
         self._baselines: Dict[str, Dict[int, np.ndarray]] = {}
+        # session_id -> last access timestamp
+        self._last_access: Dict[str, float] = {}
         # Random projection matrix for consistent embeddings
         # (fixed seed for reproducibility across calls)
         rng = np.random.RandomState(42)
-        self._projection = rng.randn(embedding_dim, 224 * 224 * 3).astype(np.float32) * 0.01
+        self._projection = rng.randn(embedding_dim, downscale * downscale * 3).astype(np.float32) * 0.01
 
     def compute_embedding(self, face_rgb: np.ndarray) -> np.ndarray:
         """
@@ -36,10 +42,10 @@ class IdentityTracker:
         Returns:
             numpy array, shape (embedding_dim,), normalized
         """
-        # Resize to 224x224 if needed
+        # Resize to downscale x downscale if needed
         import cv2
-        if face_rgb.shape[0] != 224 or face_rgb.shape[1] != 224:
-            face_rgb = cv2.resize(face_rgb, (224, 224))
+        if face_rgb.shape[0] != self.downscale or face_rgb.shape[1] != self.downscale:
+            face_rgb = cv2.resize(face_rgb, (self.downscale, self.downscale))
 
         # Normalize to [0, 1]
         if face_rgb.dtype == np.uint8:
@@ -55,6 +61,17 @@ class IdentityTracker:
             embedding = embedding / norm
 
         return embedding
+
+    def _evict_stale_sessions(self):
+        """Remove sessions that haven't been accessed within SESSION_TTL_SECONDS."""
+        now = time.time()
+        stale = [sid for sid, ts in self._last_access.items()
+                 if now - ts > SESSION_TTL_SECONDS]
+        for sid in stale:
+            self._baselines.pop(sid, None)
+            self._last_access.pop(sid, None)
+        if stale:
+            print(f"[identity_tracker] Evicted {len(stale)} stale session(s)")
 
     def compare_to_baseline(
         self,
@@ -75,6 +92,11 @@ class IdentityTracker:
                 "riskLevel": "low" | "medium" | "high"
             }
         """
+        self._last_access[session_id] = time.time()
+
+        if len(self._baselines) > 50:
+            self._evict_stale_sessions()
+
         if session_id not in self._baselines:
             self._baselines[session_id] = {}
 
@@ -123,7 +145,9 @@ class IdentityTracker:
     def clear_session(self, session_id: str):
         """Remove stored baselines for a session."""
         self._baselines.pop(session_id, None)
+        self._last_access.pop(session_id, None)
 
     def clear_all(self):
         """Remove all stored baselines."""
         self._baselines.clear()
+        self._last_access.clear()

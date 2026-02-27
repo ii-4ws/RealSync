@@ -128,15 +128,7 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
   const handleSaveChanges = async () => {
     setIsSaving(true);
 
-    // Update local state
-    if (onSaveUserName && nameInput) {
-      onSaveUserName(nameInput);
-    }
-    if (onSaveUserEmail && emailInput) {
-      onSaveUserEmail(emailInput);
-    }
-
-    // Persist to Supabase profiles table
+    // Persist to Supabase profiles table FIRST (server-first)
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
@@ -158,6 +150,17 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
       }
     } catch (err) {
       console.error('Unexpected error saving profile:', err);
+      toast.error('Failed to save profile to server.');
+      setIsSaving(false);
+      return;
+    }
+
+    // Update local state only AFTER server write succeeds
+    if (onSaveUserName && nameInput) {
+      onSaveUserName(nameInput);
+    }
+    if (onSaveUserEmail && emailInput) {
+      onSaveUserEmail(emailInput);
     }
 
     toast.success('Settings saved successfully!');
@@ -316,7 +319,7 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
 }
 
 function PrivacySettings() {
-  // ── 2FA State ──
+  // -- 2FA State --
   const [mfaEnabled, setMfaEnabled] = useState(false);
   const [mfaLoading, setMfaLoading] = useState(true);
   const [showEnrollModal, setShowEnrollModal] = useState(false);
@@ -451,7 +454,7 @@ function PrivacySettings() {
           </div>
         </div>
 
-        {/* Account Security — 2FA */}
+        {/* Account Security -- 2FA */}
         <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
           <h3 className="text-white text-lg mb-4">Account Security</h3>
 
@@ -512,7 +515,7 @@ function PrivacySettings() {
         </div>
       </div>
 
-      {/* ── 2FA Enrollment Modal (portal to body to escape overflow clipping) ── */}
+      {/* -- 2FA Enrollment Modal (portal to body to escape overflow clipping) -- */}
       {showEnrollModal && createPortal(
         <MfaEnrollModal
           qrUri={qrUri}
@@ -530,7 +533,7 @@ function PrivacySettings() {
   );
 }
 
-/* ── 2FA Enrollment Modal (compact, with 6 individual digit boxes) ── */
+/* -- 2FA Enrollment Modal (compact, with 6 individual digit boxes) -- */
 function MfaEnrollModal({
   qrUri,
   verifyCode,
@@ -600,13 +603,13 @@ function MfaEnrollModal({
 
   return (
     <>
-      {/* Backdrop — separate layer, no backdrop-blur to avoid containing-block issues */}
+      {/* Backdrop */}
       <div
         className="fixed inset-0 z-[9998] bg-black/60"
         onClick={onClose}
         style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
       />
-      {/* Modal card — absolutely positioned in center of viewport */}
+      {/* Modal card */}
       <div
         className="fixed z-[9999]"
         style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '380px', maxWidth: 'calc(100vw - 32px)' }}
@@ -647,7 +650,7 @@ function MfaEnrollModal({
                   className="flex-shrink-0 w-10 h-12 bg-[#0f0f1e] border border-gray-700 rounded-lg text-white text-center text-xl font-mono focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 outline-none transition-colors"
                 />
               ))}
-              <span className="text-gray-500 text-lg font-bold flex-shrink-0">—</span>
+              <span className="text-gray-500 text-lg font-bold flex-shrink-0">&mdash;</span>
               {[3, 4, 5].map((i) => (
                 <input
                   key={i}
@@ -750,7 +753,6 @@ function StorageSettings() {
       <h2 className="text-white text-2xl mb-6">Cloud Storage</h2>
       
       <div className="space-y-6">
-        {/* Storage Usage */}
         <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
           <h3 className="text-white text-lg mb-4">Storage Usage</h3>
           
@@ -774,7 +776,6 @@ function StorageSettings() {
               </div>
               <span className="text-white font-mono">180 GB</span>
             </div>
-            
             <div className="flex justify-between items-center py-2">
               <div className="flex items-center gap-3">
                 <div className="w-3 h-3 bg-cyan-400 rounded"></div>
@@ -782,7 +783,6 @@ function StorageSettings() {
               </div>
               <span className="text-white font-mono">45 GB</span>
             </div>
-            
             <div className="flex justify-between items-center py-2">
               <div className="flex items-center gap-3">
                 <div className="w-3 h-3 bg-purple-400 rounded"></div>
@@ -793,7 +793,6 @@ function StorageSettings() {
           </div>
         </div>
 
-        {/* Backup Settings */}
         <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
           <h3 className="text-white text-lg mb-4">Backup Settings</h3>
           
@@ -801,13 +800,10 @@ function StorageSettings() {
             <div className="flex items-center justify-between py-3 border-b border-gray-800">
               <div>
                 <p className="text-white mb-1">Automatic Backup</p>
-                <p className="text-gray-400 text-sm">
-                  Automatically backup all meeting data
-                </p>
+                <p className="text-gray-400 text-sm">Automatically backup all meeting data</p>
               </div>
               <Switch defaultChecked />
             </div>
-            
             <div>
               <Label className="text-gray-300 mb-2">Backup Frequency</Label>
               <Select defaultValue="daily">
@@ -827,12 +823,8 @@ function StorageSettings() {
       </div>
 
       <div className="mt-8 flex justify-end gap-4">
-        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300">
-          Manage Storage
-        </Button>
-        <Button className="bg-cyan-400 hover:bg-cyan-500 text-black">
-          Save Changes
-        </Button>
+        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300">Manage Storage</Button>
+        <Button className="bg-cyan-400 hover:bg-cyan-500 text-black">Save Changes</Button>
       </div>
     </div>
   );
@@ -844,7 +836,6 @@ function NotificationSettings() {
       <h2 className="text-white text-2xl mb-6">Notifications</h2>
       
       <div className="space-y-6">
-        {/* Email Notifications */}
         <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
           <h3 className="text-white text-lg mb-4">Email Notifications</h3>
           
@@ -852,39 +843,28 @@ function NotificationSettings() {
             <div className="flex items-center justify-between py-3 border-b border-gray-800">
               <div>
                 <p className="text-white mb-1">Meeting Alerts</p>
-                <p className="text-gray-400 text-sm">
-                  Receive emails when anomalies are detected
-                </p>
+                <p className="text-gray-400 text-sm">Receive emails when anomalies are detected</p>
               </div>
               <Switch defaultChecked />
             </div>
-            
             <div className="flex items-center justify-between py-3 border-b border-gray-800">
               <div>
                 <p className="text-white mb-1">Weekly Summary</p>
-                <p className="text-gray-400 text-sm">
-                  Get a weekly digest of all meetings
-                </p>
+                <p className="text-gray-400 text-sm">Get a weekly digest of all meetings</p>
               </div>
               <Switch defaultChecked />
             </div>
-            
             <div className="flex items-center justify-between py-3 border-b border-gray-800">
               <div>
                 <p className="text-white mb-1">Storage Warnings</p>
-                <p className="text-gray-400 text-sm">
-                  Alert when storage is running low
-                </p>
+                <p className="text-gray-400 text-sm">Alert when storage is running low</p>
               </div>
               <Switch defaultChecked />
             </div>
-            
             <div className="flex items-center justify-between py-3">
               <div>
                 <p className="text-white mb-1">Security Updates</p>
-                <p className="text-gray-400 text-sm">
-                  Important security announcements
-                </p>
+                <p className="text-gray-400 text-sm">Important security announcements</p>
               </div>
               <Switch defaultChecked />
             </div>
@@ -893,12 +873,8 @@ function NotificationSettings() {
       </div>
 
       <div className="mt-8 flex justify-end gap-4">
-        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300">
-          Test Notifications
-        </Button>
-        <Button className="bg-cyan-400 hover:bg-cyan-500 text-black">
-          Save Changes
-        </Button>
+        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300">Test Notifications</Button>
+        <Button className="bg-cyan-400 hover:bg-cyan-500 text-black">Save Changes</Button>
       </div>
     </div>
   );

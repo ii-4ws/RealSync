@@ -220,8 +220,8 @@ class FraudDetector {
     const windowText = this.recentLines.map((l) => l.text).join(" ");
     const windowResult = scoreTranscriptPatterns(windowText);
 
-    // Use the higher score between individual line and accumulated window
-    const result = windowResult.score > lineResult.score ? windowResult : lineResult;
+    // Only use accumulated window if the current line has some signal (>= 0.1)
+    const result = lineResult.score >= 0.1 && windowResult.score > lineResult.score ? windowResult : lineResult;
 
     if (result.score < 0.3) return alerts; // Below threshold
 

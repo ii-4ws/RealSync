@@ -103,8 +103,13 @@ def extract_and_save_faces():
     if os.path.exists(labels_file):
         labels = np.load(labels_file)
         count = len(labels)
-        print(f'Found {count} cached faces ({np.sum(labels==0)} real, {np.sum(labels==1)} fake)')
-        return count
+        missing = [i for i in range(count) if not os.path.exists(os.path.join(FACE_CACHE, f'{i}.npy'))]
+        if missing:
+            print(f'WARNING: {len(missing)} face files missing from cache. Re-extracting.')
+            os.remove(labels_file)
+        else:
+            print(f'Found {count} cached faces ({np.sum(labels==0)} real, {np.sum(labels==1)} fake)')
+            return count
 
     print('Extracting faces from videos (saved individually to avoid OOM)...')
     face_detector = setup_face_detector()

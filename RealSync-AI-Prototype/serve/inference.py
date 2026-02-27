@@ -10,6 +10,7 @@ import os
 import base64
 import io
 import time
+import threading
 from typing import Dict, List, Optional
 
 import cv2
@@ -40,11 +41,19 @@ _fer_detector = None
 _mp_face_detection = None
 _identity_tracker = IdentityTracker()
 
+_mesonet_lock = threading.Lock()
+_fer_lock = threading.Lock()
+_face_detector_lock = threading.Lock()
+
 
 def _get_mesonet():
     """Load MesoNet-4 model (lazy)."""
     global _mesonet_model
-    if _mesonet_model is None:
+    if _mesonet_model is not None:
+        return _mesonet_model
+    with _mesonet_lock:
+        if _mesonet_model is not None:
+            return _mesonet_model
         try:
             from video_model import get_model
             _mesonet_model = get_model()
@@ -57,7 +66,11 @@ def _get_mesonet():
 def _get_fer():
     """Load FER detector (lazy)."""
     global _fer_detector
-    if _fer_detector is None:
+    if _fer_detector is not None:
+        return _fer_detector
+    with _fer_lock:
+        if _fer_detector is not None:
+            return _fer_detector
         try:
             from fer import FER
             _fer_detector = FER(mtcnn=True)
@@ -70,7 +83,11 @@ def _get_fer():
 def _get_face_detector():
     """Load MediaPipe face detector (lazy)."""
     global _mp_face_detection
-    if _mp_face_detection is None:
+    if _mp_face_detection is not None:
+        return _mp_face_detection
+    with _face_detector_lock:
+        if _mp_face_detection is not None:
+            return _mp_face_detection
         try:
             import mediapipe as mp
             _mp_face_detection = mp.solutions.face_detection.FaceDetection(
@@ -180,7 +197,7 @@ def analyze_deepfake(face_crop: np.ndarray) -> Dict:
     """
     model = _get_mesonet()
     if model is None:
-        return {"authenticityScore": 0.85, "riskLevel": "low", "model": "MesoNet-4 (unavailable)"}
+        return {"authenticityScore": None, "riskLevel": "unknown", "model": "MesoNet-4", "available": False}
 
     try:
         # Preprocess for MesoNet-4: 256x256 RGB, normalized to [0,1]
@@ -210,7 +227,7 @@ def analyze_deepfake(face_crop: np.ndarray) -> Dict:
 
     except Exception as e:
         print(f"[inference] Deepfake analysis error: {e}")
-        return {"authenticityScore": 0.85, "riskLevel": "low", "model": "MesoNet-4 (error)"}
+        return {"authenticityScore": None, "riskLevel": "unknown", "model": "MesoNet-4", "available": False}
 
 
 def analyze_emotion(face_crop: np.ndarray) -> Dict:
@@ -228,7 +245,7 @@ def analyze_emotion(face_crop: np.ndarray) -> Dict:
     if detector is None:
         return {
             "label": "Neutral",
-            "confidence": 0.5,
+            "confidence": 0.0,
             "scores": {e: 0.0 for e in EMOTION_LABELS},
         }
 
@@ -238,7 +255,7 @@ def analyze_emotion(face_crop: np.ndarray) -> Dict:
         if not emotions or len(emotions) == 0:
             return {
                 "label": "Neutral",
-                "confidence": 0.5,
+                "confidence": 0.0,
                 "scores": {e: 0.0 for e in EMOTION_LABELS},
             }
 
@@ -277,7 +294,7 @@ def analyze_emotion(face_crop: np.ndarray) -> Dict:
         print(f"[inference] Emotion analysis error: {e}")
         return {
             "label": "Neutral",
-            "confidence": 0.5,
+            "confidence": 0.0,
             "scores": {e_label: 0.0 for e_label in EMOTION_LABELS},
         }
 
@@ -353,15 +370,16 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: str = None) -> D
 
     # Compute trust score from aggregated signals
     auth_score = primary["deepfake"]["authenticityScore"]
+    effective_auth = auth_score if auth_score is not None else 0.5
     shift = primary["identity"]["embeddingShift"]
     emotion_conf = primary["emotion"]["confidence"]
 
     audio_conf = 0.9  # placeholder — no audio analysis in frame pipeline
-    video_conf = auth_score
+    video_conf = effective_auth
     behavior_conf = round(0.55 + emotion_conf * 0.4, 4)
 
     trust_score = round(
-        (auth_score + audio_conf + (1 - shift) + behavior_conf) / 4, 4
+        (effective_auth + audio_conf + (1 - shift) + behavior_conf) / 4, 4
     )
     trust_score = max(0.0, min(1.0, trust_score))
 
@@ -412,7 +430,8 @@ def _empty_response(session_id: str, captured_at: str = None) -> Dict:
                 "riskLevel": "low",
                 "model": "MesoNet-4",
             },
-            "trustScore": 0.95,
+            "trustScore": None,
+            "noFaceDetected": True,
             "confidenceLayers": {
                 "audio": 0.9,
                 "video": 1.0,

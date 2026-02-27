@@ -16,7 +16,10 @@ const botManager = require("./bot/botManager");
 const { authenticate, authenticateWsToken, requireSessionOwner } = require("./lib/auth");
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGIN || "http://localhost:3000",
+  credentials: true,
+}));
 app.use(express.json({ limit: "2mb" }));
 app.use(authenticate);
 
@@ -194,7 +197,7 @@ const createSession = ({ title, meetingType, meetingUrl = null, userId = null })
   latestSessionId = id;
 
   // Persist to Supabase (non-blocking)
-  persistence.createSession({ id, title: session.title, meetingType: session.meetingTypeSelected, userId, meetingUrl }).catch(() => {});
+  persistence.createSession({ id, title: session.title, meetingType: session.meetingTypeSelected, userId, meetingUrl }).catch((err) => { console.warn(`[persistence] operation failed: ${err?.message ?? err}`); });
 
   return session;
 };
@@ -220,37 +223,54 @@ const wssIngest = new WebSocket.Server({ server, path: "/ws/ingest" });
 wssSubscribe.on("connection", async (socket, req) => {
   const url = new URL(req.url, "http://localhost");
   const requestedSessionId = url.searchParams.get("sessionId");
-  const token = url.searchParams.get("token");
   const sessionId = requestedSessionId || latestSessionId;
 
   const session = sessionId ? getSession(sessionId) : null;
   if (!session) {
-    // Backwards-compat: if no sessions exist, keep old behavior.
     socket.send(JSON.stringify({ type: "metrics", data: generateSimulatedMetrics() }));
     return;
   }
 
-  // Verify ownership if session has a userId and a token was provided
-  if (session.userId && token) {
-    const wsUserId = await authenticateWsToken(token);
-    if (wsUserId && wsUserId !== session.userId) {
-      socket.close(4003, "Access denied");
-      return;
-    }
+  const addSubscriber = () => {
+    session.subscribers.add(socket);
+    socket.send(
+      JSON.stringify({
+        type: "metrics",
+        sessionId: session.id,
+        data: session.metrics,
+      })
+    );
+    socket.on("close", () => {
+      session.subscribers.delete(socket);
+    });
+  };
+
+  // If session does not require auth, subscribe immediately
+  if (!session.userId) {
+    addSubscriber();
+    return;
   }
 
-  session.subscribers.add(socket);
+  // Session requires auth — accept token from first WS message (not URL params)
+  const authTimeout = setTimeout(() => {
+    socket.close(4003, "Auth timeout");
+  }, 10000);
 
-  socket.send(
-    JSON.stringify({
-      type: "metrics",
-      sessionId: session.id,
-      data: session.metrics,
-    })
-  );
-
-  socket.on("close", () => {
-    session.subscribers.delete(socket);
+  socket.once("message", async (raw) => {
+    clearTimeout(authTimeout);
+    try {
+      const msg = JSON.parse(raw.toString());
+      if (msg.type === "auth" && msg.token) {
+        const wsUserId = await authenticateWsToken(msg.token);
+        if (wsUserId && wsUserId === session.userId) {
+          addSubscriber();
+          return;
+        }
+      }
+    } catch {
+      // ignore parse errors
+    }
+    socket.close(4003, "Access denied");
   });
 });
 
@@ -262,7 +282,7 @@ const handleTranscript = (session, transcript) => {
     session.transcriptState.interim = "";
 
     // Persist to Supabase (non-blocking)
-    persistence.insertTranscriptLine(session.id, { text, isFinal, confidence, ts, speaker }).catch(() => {});
+    persistence.insertTranscriptLine(session.id, { text, isFinal, confidence, ts, speaker }).catch((err) => { console.warn(`[persistence] operation failed: ${err?.message ?? err}`); });
   } else {
     session.transcriptState.interim = text;
   }
@@ -297,7 +317,7 @@ const handleTranscript = (session, transcript) => {
       ts: suggestion.ts,
     });
     // Persist suggestion (non-blocking)
-    persistence.insertSuggestion(session.id, suggestion).catch(() => {});
+    persistence.insertSuggestion(session.id, suggestion).catch((err) => { console.warn(`[persistence] operation failed: ${err?.message ?? err}`); });
   });
 
   // Fraud/scam detection on final transcript lines
@@ -309,7 +329,7 @@ const handleTranscript = (session, transcript) => {
     fusedAlerts.forEach((alert) => {
       session.alerts.push(alert);
       broadcastToSession(session.id, { type: "alert", ...alert });
-      persistence.insertAlert(session.id, alert).catch(() => {});
+      persistence.insertAlert(session.id, alert).catch((err) => { console.warn(`[persistence] operation failed: ${err?.message ?? err}`); });
     });
   }
 
@@ -332,7 +352,7 @@ const handleTranscript = (session, transcript) => {
   }
 };
 
-wssIngest.on("connection", (socket, req) => {
+wssIngest.on("connection", async (socket, req) => {
   const url = new URL(req.url, "http://localhost");
   const sessionId = url.searchParams.get("sessionId");
   const session = getSession(sessionId);
@@ -340,6 +360,17 @@ wssIngest.on("connection", (socket, req) => {
   if (!session) {
     socket.close(1008, "Unknown session");
     return;
+  }
+
+  // Verify ownership
+  const ingestUrl = new URL(req.url, "http://localhost");
+  const ingestToken = ingestUrl.searchParams.get("token");
+  if (session.userId) {
+    const wsUserId = await authenticateWsToken(ingestToken);
+    if (!wsUserId || wsUserId !== session.userId) {
+      socket.close(4003, "Access denied");
+      return;
+    }
   }
 
   socket.on("message", (raw) => {
@@ -423,7 +454,7 @@ wssIngest.on("connection", (socket, req) => {
         ts: message.ts || makeIso(),
       });
 
-      persistence.updateBotStatus(session.id, session.botStatus).catch(() => {});
+      persistence.updateBotStatus(session.id, session.botStatus).catch((err) => { console.warn(`[persistence] operation failed: ${err?.message ?? err}`); });
       return;
     }
   });
@@ -442,7 +473,7 @@ wssIngest.on("connection", (socket, req) => {
 /** Throttle: max 1 frame analysis in-flight per session */
 const frameInFlight = new Map(); // sessionId → boolean
 /** Snapshot metrics to Supabase every Nth frame */
-let frameCounter = 0;
+/** Snapshot counter is now per-session: session.frameSnapshotCounter */
 
 async function handleFrame(session, message) {
   // Throttle: skip if a frame is already being analyzed for this session
@@ -474,13 +505,13 @@ async function handleFrame(session, message) {
     visualAlerts.forEach((alert) => {
       session.alerts.push(alert);
       broadcastToSession(session.id, { type: "alert", ...alert });
-      persistence.insertAlert(session.id, alert).catch(() => {});
+      persistence.insertAlert(session.id, alert).catch((err) => { console.warn(`[persistence] operation failed: ${err?.message ?? err}`); });
     });
 
     // Persist metrics snapshot every 5th frame (~10s at 2fps)
-    frameCounter++;
-    if (frameCounter % 5 === 0) {
-      persistence.insertMetricsSnapshot(session.id, session.metrics).catch(() => {});
+    session.frameSnapshotCounter = (session.frameSnapshotCounter || 0) + 1;
+    if (session.frameSnapshotCounter % 5 === 0) {
+      persistence.insertMetricsSnapshot(session.id, session.metrics).catch((err) => { console.warn(`[persistence] operation failed: ${err?.message ?? err}`); });
     }
   } finally {
     frameInFlight.set(session.id, false);
@@ -571,7 +602,7 @@ app.get("/api/sessions", (req, res) => {
   // In prototype mode (req.userId === null) return all sessions.
   const filtered = req.userId
     ? allSessions.filter((s) => !s.userId || s.userId === req.userId)
-    : allSessions;
+    : allSessions.filter((s) => !s.userId);
 
   const list = filtered.map((s) => ({
     id: s.id,
@@ -633,13 +664,56 @@ app.post("/api/sessions/:id/stop", requireSessionOwner(getSession), async (req, 
   session.botStatus = "disconnected";
 
   // Persist session end
-  persistence.endSession(session.id).catch(() => {});
+  persistence.endSession(session.id).catch((err) => { console.warn(`[persistence] operation failed: ${err?.message ?? err}`); });
 
   // Generate post-meeting report (non-blocking)
-  persistence.generateReport(session.id).catch(() => {});
+  persistence.generateReport(session.id).catch((err) => { console.warn(`[persistence] operation failed: ${err?.message ?? err}`); });
 
   return res.json({ ok: true, endedAt: session.endedAt });
 });
+
+/** Shared ingest message processor used by both WS handler and bot callback. */
+function processIngestMessage(session, message) {
+  if (message.type === "frame") {
+    handleFrame(session, message).catch((err) => {
+      console.warn(`Frame analysis error for session ${session.id}: ${err?.message ?? err}`);
+    });
+  } else if (message.type === "caption") {
+    handleTranscript(session, {
+      text: message.text,
+      isFinal: true,
+      confidence: 0.95,
+      ts: message.ts || makeIso(),
+      speaker: message.speaker || "unknown",
+      source: "caption",
+    });
+  } else if (message.type === "source_status") {
+    session.botStatus = message.status || "connected";
+    session.botStreams = message.streams || {};
+    broadcastToSession(session.id, {
+      type: "sourceStatus",
+      status: session.botStatus,
+      streams: session.botStreams,
+      ts: message.ts || makeIso(),
+    });
+    persistence.updateBotStatus(session.id, session.botStatus).catch((err) => {
+      console.warn(`[persistence] updateBotStatus failed: ${err?.message ?? err}`);
+    });
+  } else if (message.type === "audio_pcm") {
+    if (!session.stt) {
+      session.stt = createSttStream({
+        onTranscript: (t) => handleTranscript(session, t),
+        onError: (err) => {
+          console.warn(`STT error for session ${session.id}: ${err?.message ?? err}`);
+        },
+      });
+    }
+    const dataB64 = message.dataB64;
+    if (typeof dataB64 === "string" && dataB64) {
+      session.stt.write(Buffer.from(dataB64, "base64"));
+    }
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Bot management endpoints                                           */
@@ -661,43 +735,7 @@ app.post("/api/sessions/:id/join", requireSessionOwner(getSession), (req, res) =
     meetingUrl,
     displayName: displayName || "RealSync Bot",
     onIngestMessage: (message) => {
-      // Route bot messages through the same ingest pipeline
-      if (message.type === "frame") {
-        handleFrame(session, message).catch(() => {});
-      } else if (message.type === "caption") {
-        handleTranscript(session, {
-          text: message.text,
-          isFinal: true,
-          confidence: 0.95,
-          ts: message.ts || makeIso(),
-          speaker: message.speaker || "unknown",
-          source: "caption",
-        });
-      } else if (message.type === "source_status") {
-        session.botStatus = message.status || "connected";
-        session.botStreams = message.streams || {};
-        broadcastToSession(session.id, {
-          type: "sourceStatus",
-          status: session.botStatus,
-          streams: session.botStreams,
-          ts: message.ts || makeIso(),
-        });
-        persistence.updateBotStatus(session.id, session.botStatus).catch(() => {});
-      } else if (message.type === "audio_pcm") {
-        // Route audio to STT
-        if (!session.stt) {
-          session.stt = createSttStream({
-            onTranscript: (t) => handleTranscript(session, t),
-            onError: (err) => {
-              console.warn(`STT error for session ${session.id}: ${err?.message ?? err}`);
-            },
-          });
-        }
-        const dataB64 = message.dataB64;
-        if (typeof dataB64 === "string" && dataB64) {
-          session.stt.write(Buffer.from(dataB64, "base64"));
-        }
-      }
+      processIngestMessage(session, message);
     },
   });
 
@@ -819,8 +857,16 @@ app.post("/api/metrics", (req, res) => {
   // Backwards-compat: update a specific session if provided.
   const session =
     (sessionId && sessions.get(sessionId)) ||
-    (latestSessionId && sessions.get(latestSessionId)) ||
-    createSession({ title: "Implicit session", meetingType: "business" });
+    (latestSessionId && sessions.get(latestSessionId));
+
+  if (!session) {
+    return res.status(404).json({ error: "No active session. Create one first via POST /api/sessions." });
+  }
+
+  // Verify ownership
+  if (session.userId && req.userId && session.userId !== req.userId) {
+    return res.status(403).json({ error: "Access denied" });
+  }
 
   session.metrics = {
     ...deriveMetrics(payload),
@@ -831,6 +877,12 @@ app.post("/api/metrics", (req, res) => {
 
   broadcastToSession(session.id, { type: "metrics", data: session.metrics });
   return res.json({ status: "ok", storedAt: session.metrics.timestamp });
+});
+
+// Global error handler (Express 5 requires 4-arg signature)
+app.use((err, req, res, _next) => {
+  console.error(`[server] Unhandled error: ${err?.message ?? err}`);
+  res.status(500).json({ error: "Internal server error" });
 });
 
 server.listen(PORT, () => {

@@ -238,7 +238,15 @@ function startBot({ sessionId, meetingUrl, displayName, onIngestMessage }) {
  * @returns {{ scheduled: boolean, delayMs: number }}
  */
 function scheduleBot({ sessionId, meetingUrl, scheduledAt, displayName, onIngestMessage }) {
-  const delayMs = new Date(scheduledAt).getTime() - Date.now();
+  const ts = new Date(scheduledAt).getTime();
+  if (!Number.isFinite(ts)) {
+    return { scheduled: false, error: "Invalid scheduledAt date" };
+  }
+  const delayMs = ts - Date.now();
+  const MAX_SCHEDULE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+  if (delayMs > MAX_SCHEDULE_MS) {
+    return { scheduled: false, error: "Cannot schedule more than 7 days ahead" };
+  }
 
   if (delayMs <= 0) {
     // Already past — join now

@@ -8,25 +8,7 @@
  * are allowed through with `req.userId = null` so the app keeps working.
  */
 
-const { createClient } = require("@supabase/supabase-js");
-
-let supabase = null;
-
-function getAuthClient() {
-  if (supabase) return supabase;
-
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_KEY;
-
-  if (!url || !key) return null;
-
-  try {
-    supabase = createClient(url, key);
-    return supabase;
-  } catch {
-    return null;
-  }
-}
+const { getClient } = require("./supabaseClient");
 
 /**
  * Express middleware: extracts Bearer token, verifies with Supabase,
@@ -34,7 +16,7 @@ function getAuthClient() {
  * Supabase is not configured (prototype mode).
  */
 async function authenticate(req, res, next) {
-  const client = getAuthClient();
+  const client = getClient();
 
   // Prototype mode — no Supabase configured, allow all
   if (!client) {
@@ -68,7 +50,7 @@ async function authenticate(req, res, next) {
  * Returns the userId or null (for prototype mode / missing config).
  */
 async function authenticateWsToken(token) {
-  const client = getAuthClient();
+  const client = getClient();
   if (!client || !token) return null;
 
   try {
@@ -94,7 +76,7 @@ function requireSessionOwner(getSessionFn) {
     const session = getSessionFn(req.params.id);
     if (!session) return res.status(404).json({ error: "Session not found" });
 
-    if (session.userId && session.userId !== req.userId) {
+    if (session.userId !== null && session.userId !== req.userId) {
       return res.status(403).json({ error: "Access denied" });
     }
 
