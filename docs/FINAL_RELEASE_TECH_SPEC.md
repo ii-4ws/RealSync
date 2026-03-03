@@ -1037,15 +1037,15 @@ Terminal 3: cd RealSync-AI-Prototype && python serve/app.py  # :5100
 PORT=4000
 REALSYNC_USE_GCP_STT=1
 REALSYNC_STT_LANGUAGE=en-US
-SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_SERVICE_KEY=eyJ...
+SUPABASE_URL=https://<your-project>.supabase.co
+SUPABASE_SERVICE_KEY=<your-service-role-key>
 AI_SERVICE_URL=http://localhost:5100
 
 # Frontend (.env)
 VITE_API_BASE_URL=http://localhost:4000
 VITE_WS_BASE_URL=ws://localhost:4000
-VITE_SUPABASE_URL=https://xxx.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJ...
+VITE_SUPABASE_URL=https://<your-project>.supabase.co
+VITE_SUPABASE_ANON_KEY=<your-supabase-anon-key>
 
 # AI Service (.env)
 PORT=5100

@@ -16,7 +16,7 @@ pip install -r requirements.txt
 
 Create Front-End/.env:
 
-VITE_SUPABASE_URL=https://quoanhdzcplrxnwnewct.supabase.co
+VITE_SUPABASE_URL=https://<your-project>.supabase.co
 
 VITE_SUPABASE_ANON_KEY=ADD_YOUR_KEY
 
@@ -24,7 +24,7 @@ VITE_PROTOTYPE_MODE=0
 
 Create realsync-backend/.env:
 
-SUPABASE_URL=https://quoanhdzcplrxnwnewct.supabase.co
+SUPABASE_URL=https://<your-project>.supabase.co
 
 SUPABASE_SERVICE_KEY=ADD_YOUR_KEY
 

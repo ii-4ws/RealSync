@@ -67,8 +67,8 @@ docker run -d \
   -e AI_SERVICE_URL=http://ai-service:5100 \
   -e AI_TIMEOUT_MS=5000 \
   -e AI_API_KEY=your-shared-secret \
-  -e SUPABASE_URL=https://xxx.supabase.co \
-  -e SUPABASE_SERVICE_KEY=your-service-role-key \
+  -e SUPABASE_URL=https://<your-project>.supabase.co \
+  -e SUPABASE_SERVICE_KEY=<your-service-role-key> \
   -e REALSYNC_USE_GCP_STT=0 \
   -e REALSYNC_BOT_MODE=stub \
   -e LOG_LEVEL=info \
@@ -178,8 +178,8 @@ gunicorn serve.app:app -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:5100
 |---|---|---|---|
 | `VITE_API_BASE_URL` | Yes | `https://api.yourdomain.com` | Backend API URL |
 | `VITE_WS_BASE_URL` | Yes | `wss://api.yourdomain.com` | Backend WebSocket URL |
-| `VITE_SUPABASE_URL` | Yes | `https://xxx.supabase.co` | Supabase project URL |
-| `VITE_SUPABASE_ANON_KEY` | Yes | `eyJhbG...` | Supabase anon (public) key |
+| `VITE_SUPABASE_URL` | Yes | `https://<your-project>.supabase.co` | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Yes | `<your-supabase-anon-key>` | Supabase anon (public) key |
 
 ### Backend (`realsync-backend/.env`)
 
@@ -190,8 +190,8 @@ gunicorn serve.app:app -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:5100
 | `AI_SERVICE_URL` | Yes | `http://ai-service:5100` | AI service URL (Docker service name or actual host URL) |
 | `AI_TIMEOUT_MS` | No | `5000` | Timeout for AI requests (ms) |
 | `AI_API_KEY` | Yes | `your-shared-secret` | Shared secret with AI service |
-| `SUPABASE_URL` | Yes | `https://xxx.supabase.co` | Supabase project URL |
-| `SUPABASE_SERVICE_KEY` | Yes | `eyJhbG...` | Supabase service_role key (keep secret!) |
+| `SUPABASE_URL` | Yes | `https://<your-project>.supabase.co` | Supabase project URL |
+| `SUPABASE_SERVICE_KEY` | Yes | `<your-service-role-key>` | Supabase service_role key (keep secret!) |
 | `REALSYNC_USE_GCP_STT` | No | `0` | Enable Google Cloud Speech-to-Text |
 | `REALSYNC_BOT_MODE` | No | `stub` | Zoom bot mode (`stub` or `live`) |
 | `LOG_LEVEL` | No | `info` | Logging level (`debug`, `info`, `warn`, `error`) |

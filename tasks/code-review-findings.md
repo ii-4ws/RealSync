@@ -11,6 +11,7 @@
 - **Area:** Security
 - The `.env` file contains a live, non-redacted `SUPABASE_SERVICE_KEY` (service_role JWT). This key bypasses ALL Row Level Security. Anyone with repo access can read the entire database.
 - **Fix:** Rotate the key immediately in Supabase dashboard (Project Settings > API). Verify it's not in git history with `git log --all --full-history -- realsync-backend/.env`. Replace value with a placeholder.
+- **Status:** Verified — `.env` files are excluded by `.gitignore` and have never been committed to git history.
 
 ### C2 — No `.dockerignore` — secrets baked into Docker images
 - **Files:** Both `RealSync-AI-Prototype/` and `realsync-backend/` lack `.dockerignore`

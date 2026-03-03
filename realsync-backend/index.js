@@ -74,7 +74,7 @@ app.use(cors({
   credentials: true,
 }));
 
-// Rate limiting on API routes: 100 requests per minute per IP
+// Rate limiting on API routes: 100 requests per minute per IP (global safety net)
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 100,
@@ -83,6 +83,31 @@ const apiLimiter = rateLimit({
   message: { error: "Too many requests, please try again later." },
 });
 app.use("/api/", apiLimiter);
+
+// Per-route rate limiters for sensitive endpoints
+const sessionCreateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many session creation requests." },
+});
+
+const settingsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many settings requests." },
+});
+
+const notificationLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many notification requests." },
+});
 
 app.use(express.json({ limit: "2mb" }));
 app.use(authenticate);
@@ -429,7 +454,16 @@ wssSubscribe.on("connection", async (socket, req) => {
     }
 
     // C3: Respond to client-side ping keepalive messages
+    // WS rate limiting: max 60 messages per minute per connection
+    let wsMsgCount = 0;
+    const wsRateLimitInterval = setInterval(() => { wsMsgCount = 0; }, 60_000);
     socket.on("message", (raw) => {
+      wsMsgCount++;
+      if (wsMsgCount > 60) {
+        socket.close(4029, "Rate limit exceeded");
+        clearInterval(wsRateLimitInterval);
+        return;
+      }
       try {
         const msg = JSON.parse(raw.toString());
         if (msg.type === "ping") {
@@ -443,6 +477,7 @@ wssSubscribe.on("connection", async (socket, req) => {
     });
 
     socket.on("close", () => {
+      clearInterval(wsRateLimitInterval);
       session.subscribers.delete(socket);
     });
   };
@@ -632,7 +667,18 @@ wssIngest.on("connection", async (socket, req) => {
     if (session._ingestSocket === socket) session._ingestSocket = null;
   });
 
+  // Ingest WS rate limiting: max 500 messages per 10-second window
+  let ingestMsgCount = 0;
+  const ingestRateLimitInterval = setInterval(() => { ingestMsgCount = 0; }, 10_000);
+  socket.on("close", () => { clearInterval(ingestRateLimitInterval); });
+
   socket.on("message", (raw) => {
+    ingestMsgCount++;
+    if (ingestMsgCount > 500) {
+      log.warn("ws-ingest", `Rate limit exceeded for session ${sessionId}`);
+      return; // Silently drop excess messages (don't close — bot recovery is expensive)
+    }
+
     let message;
     try {
       message = JSON.parse(raw.toString("utf-8"));
@@ -702,7 +748,7 @@ wssIngest.on("connection", async (socket, req) => {
               // Fix 2: Recompute trust and broadcast so frontend sees audio updates
               if (session.metrics?.trustScore != null) {
                 const behaviorConf = session.metrics.confidenceLayers?.behavior || 0.55;
-                const identityShift = session.metrics.confidenceLayers?.identityShift || 0;
+                const identityShift = session.metrics.identity?.embeddingShift || 0;
                 const identitySignal = 1.0 - identityShift;
                 const videoSignal = session.metrics.confidenceLayers?.video ?? 0.5;
                 const audioScore = res.audio.authenticityScore;
@@ -979,7 +1025,7 @@ app.get("/api/models", (req, res) => {
   });
 });
 
-app.post("/api/sessions", (req, res) => {
+app.post("/api/sessions", sessionCreateLimiter, (req, res) => {
   const { title, meetingType, meetingUrl, scheduledAt } = req.body ?? {};
   if (!title || typeof title !== "string" || !title.trim()) {
     return res.status(400).json({ error: "title is required" });
@@ -1213,7 +1259,7 @@ function processIngestMessage(session, message) {
               // Recompute trust and broadcast for audio-via-REST path
               if (session.metrics?.trustScore != null) {
                 const behaviorConf = session.metrics.confidenceLayers?.behavior || 0.55;
-                const identityShift = session.metrics.confidenceLayers?.identityShift || 0;
+                const identityShift = session.metrics.identity?.embeddingShift || 0;
                 const identitySignal = 1.0 - identityShift;
                 const videoSignal = session.metrics.confidenceLayers?.video ?? 0.5;
                 const audioScore = res.audio.authenticityScore;
@@ -1395,7 +1441,7 @@ app.get("/api/notifications/unread-count", async (req, res) => {
   return res.json({ unreadCount: count });
 });
 
-app.post("/api/notifications/read", async (req, res) => {
+app.post("/api/notifications/read", notificationLimiter, async (req, res) => {
   if (!req.userId) {
     return res.status(401).json({ error: "Authentication required" });
   }
@@ -1439,13 +1485,27 @@ app.get("/api/settings", async (req, res) => {
   return res.json(settings);
 });
 
-app.patch("/api/settings", async (req, res) => {
+app.patch("/api/settings", settingsLimiter, async (req, res) => {
   if (!req.userId) {
     return res.status(401).json({ error: "Authentication required" });
   }
   const body = req.body;
   if (!body || typeof body !== "object") {
     return res.status(400).json({ error: "Request body must be a JSON object" });
+  }
+  // Schema validation: only allow known boolean detection settings
+  const allowedKeys = ["facialAnalysis", "voicePattern", "emotionDetection"];
+  const bodyKeys = Object.keys(body);
+  if (bodyKeys.length > 10) {
+    return res.status(400).json({ error: "Too many fields" });
+  }
+  for (const key of bodyKeys) {
+    if (!allowedKeys.includes(key)) {
+      return res.status(400).json({ error: `Unknown setting: ${key}` });
+    }
+    if (typeof body[key] !== "boolean") {
+      return res.status(400).json({ error: `${key} must be a boolean` });
+    }
   }
   const result = await persistence.updateDetectionSettings(req.userId, body);
   if (!result.ok) {
@@ -1630,6 +1690,7 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 process.on("uncaughtException", (err) => {
   log.error("uncaught", `Uncaught exception: ${err.message}`, { stack: err.stack });
+  process.exit(1);
 });
 process.on("unhandledRejection", (reason) => {
   log.error("unhandled-rejection", `Unhandled rejection: ${reason}`, { stack: reason?.stack });

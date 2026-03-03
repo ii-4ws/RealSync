@@ -124,8 +124,8 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
       }
 
       // Check file type
-      if (!file.type.match(/image\/(jpg|jpeg|png|gif)/)) {
-        toast.error('Please upload a JPG, PNG, or GIF image');
+      if (!file.type.match(/image\/(jpg|jpeg|png|gif|webp)/)) {
+        toast.error('Please upload a JPG, PNG, GIF, or WebP image');
         return;
       }
 
@@ -156,6 +156,16 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
   };
 
   const handleSaveChanges = async () => {
+    if (nameInput.trim().length > 100) {
+      toast.error('Name must be 100 characters or less.');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (emailInput.trim() && !emailRegex.test(emailInput.trim())) {
+      toast.error('Please enter a valid email address.');
+      return;
+    }
+
     setIsSaving(true);
 
     try {
@@ -234,6 +244,7 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
                 <Input
                   value={nameInput}
                   className="bg-[#2a2a3e] border-gray-700 text-white"
+                  maxLength={100}
                   onChange={(e) => setNameInput(e.target.value)}
                 />
               </div>
@@ -244,6 +255,7 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
                   type="email"
                   value={emailInput}
                   className="bg-[#2a2a3e] border-gray-700 text-white"
+                  maxLength={254}
                   onChange={(e) => setEmailInput(e.target.value)}
                 />
               </div>

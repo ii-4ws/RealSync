@@ -58,6 +58,14 @@ export function CompleteProfileScreen({ userId, onComplete, initialEmail }: Comp
       setFormError('First name and last name are required.');
       return;
     }
+    if (firstName.trim().length > 50 || lastName.trim().length > 50) {
+      setFormError('Names must be 50 characters or less.');
+      return;
+    }
+    if (jobTitle.trim().length > 100) {
+      setFormError('Job title must be 100 characters or less.');
+      return;
+    }
 
     setIsSubmitting(true);
     setFormError(null);
@@ -173,6 +181,7 @@ export function CompleteProfileScreen({ userId, onComplete, initialEmail }: Comp
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               placeholder="John"
+              maxLength={50}
               className="bg-[#0f0f1e] border-gray-700 text-white placeholder:text-gray-500 h-12"
             />
           </div>
@@ -184,6 +193,7 @@ export function CompleteProfileScreen({ userId, onComplete, initialEmail }: Comp
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               placeholder="Doe"
+              maxLength={50}
               className="bg-[#0f0f1e] border-gray-700 text-white placeholder:text-gray-500 h-12"
             />
           </div>
@@ -195,6 +205,7 @@ export function CompleteProfileScreen({ userId, onComplete, initialEmail }: Comp
               value={jobTitle}
               onChange={(e) => setJobTitle(e.target.value)}
               placeholder="Security Analyst"
+              maxLength={100}
               className="bg-[#0f0f1e] border-gray-700 text-white placeholder:text-gray-500 h-12"
             />
           </div>

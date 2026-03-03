@@ -204,6 +204,10 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
       toast.error('Please enter a meeting title');
       return;
     }
+    if (meetingName.trim().length > 100) {
+      toast.error('Meeting title must be 100 characters or less');
+      return;
+    }
 
     // Zoom URL is required
     if (!meetingUrl.trim()) {
@@ -630,6 +634,7 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
                   type="text"
                   placeholder="e.g. Q4 Financial Review"
                   value={meetingName}
+                  maxLength={100}
                   onChange={(e) => setMeetingName(e.target.value)}
                   className="bg-[#1a1a2e] border border-gray-800 text-gray-300 placeholder:text-gray-600"
                 />

@@ -31,8 +31,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 INFERENCE_TIMEOUT_S = 30  # Max seconds for any single inference call
+
+# Rate limiting: key by API key header (falls back to IP)
+def _rate_limit_key(request: Request) -> str:
+    return request.headers.get("X-API-Key", get_remote_address(request))
+
+limiter = Limiter(key_func=_rate_limit_key)
 
 from serve.config import PORT, HOST
 from serve.inference import analyze_frame, get_identity_tracker, cleanup_session, _utcnow_iso, _get_face_detector
@@ -110,6 +119,8 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Restrict CORS to the RealSync backend and local development origins.
 # CORS_ALLOWED_ORIGIN supports comma-separated values for multiple origins.
@@ -168,7 +179,8 @@ class AnalyzeTextRequest(BaseModel):
 # ---------------------------------------------------------------
 
 @app.get("/api/health")
-async def health():
+@limiter.limit("120/minute")
+async def health(request: Request):
     """Health check endpoint."""
     models = {}
 
@@ -207,20 +219,21 @@ async def health():
 
 
 @app.post("/api/analyze/frame")
-async def analyze_frame_endpoint(request: AnalyzeFrameRequest):
+@limiter.limit("30/minute")
+async def analyze_frame_endpoint(request: Request, payload: AnalyzeFrameRequest):
     """Analyze a video frame for deepfake, emotion, and identity signals."""
-    if not request.frameB64 or not request.frameB64.strip():
+    if not payload.frameB64 or not payload.frameB64.strip():
         raise HTTPException(status_code=400, detail="frameB64 is required")
-    if not request.sessionId:
+    if not payload.sessionId:
         raise HTTPException(status_code=400, detail="sessionId is required")
 
     try:
         result = await asyncio.wait_for(
             run_in_threadpool(
                 analyze_frame,
-                session_id=request.sessionId,
-                frame_b64=request.frameB64,
-                captured_at=request.capturedAt,
+                session_id=payload.sessionId,
+                frame_b64=payload.frameB64,
+                captured_at=payload.capturedAt,
             ),
             timeout=INFERENCE_TIMEOUT_S,
         )
@@ -233,24 +246,25 @@ async def analyze_frame_endpoint(request: AnalyzeFrameRequest):
 
 
 @app.post("/api/analyze/audio")
-async def analyze_audio_endpoint(request: AnalyzeAudioRequest):
+@limiter.limit("30/minute")
+async def analyze_audio_endpoint(request: Request, payload: AnalyzeAudioRequest):
     """Analyze audio for deepfake detection using AASIST."""
-    if not request.audioB64:
+    if not payload.audioB64:
         raise HTTPException(status_code=400, detail="audioB64 is required")
-    if not request.sessionId:
+    if not payload.sessionId:
         raise HTTPException(status_code=400, detail="sessionId is required")
     # M5: Reject oversized audio payloads (4MB base64 ≈ 3MB decoded)
-    if len(request.audioB64) > 4 * 1024 * 1024:
+    if len(payload.audioB64) > 4 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="audioB64 payload exceeds 4MB limit")
 
     try:
         result = await asyncio.wait_for(
-            run_in_threadpool(predict_audio, request.audioB64),
+            run_in_threadpool(predict_audio, payload.audioB64),
             timeout=INFERENCE_TIMEOUT_S,
         )
         processed_at = _utcnow_iso()
         return {
-            "sessionId": request.sessionId,
+            "sessionId": payload.sessionId,
             "processedAt": processed_at,
             "audio": result,
         }
@@ -262,24 +276,25 @@ async def analyze_audio_endpoint(request: AnalyzeAudioRequest):
 
 
 @app.post("/api/analyze/text")
-async def analyze_text_endpoint(request: AnalyzeTextRequest):
+@limiter.limit("60/minute")
+async def analyze_text_endpoint(request: Request, payload: AnalyzeTextRequest):
     """Analyze transcript text for behavioral signals using DeBERTa-v3."""
-    if not request.text or not request.text.strip():
+    if not payload.text or not payload.text.strip():
         raise HTTPException(status_code=400, detail="text is required")
-    if not request.sessionId:
+    if not payload.sessionId:
         raise HTTPException(status_code=400, detail="sessionId is required")
     # I4: Reject oversized text payloads
-    if len(request.text) > 50_000:
+    if len(payload.text) > 50_000:
         raise HTTPException(status_code=413, detail="text payload exceeds 50KB limit")
 
     try:
         result = await asyncio.wait_for(
-            run_in_threadpool(analyze_text_fn, request.text),
+            run_in_threadpool(analyze_text_fn, payload.text),
             timeout=INFERENCE_TIMEOUT_S,
         )
         processed_at = _utcnow_iso()
         return {
-            "sessionId": request.sessionId,
+            "sessionId": payload.sessionId,
             "processedAt": processed_at,
             "behavioral": result,
         }
@@ -291,7 +306,8 @@ async def analyze_text_endpoint(request: AnalyzeTextRequest):
 
 
 @app.post("/api/sessions/{session_id}/clear-identity")
-async def clear_identity(session_id: str):
+@limiter.limit("10/minute")
+async def clear_identity(request: Request, session_id: str):
     """Clear stored identity baselines, temporal buffer, and no-face counters for a session."""
     if not session_id or len(session_id) > 64 or not re.match(r'^[a-zA-Z0-9_-]+$', session_id):
         raise HTTPException(status_code=400, detail="Invalid session_id format")

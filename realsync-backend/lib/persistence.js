@@ -90,15 +90,13 @@ async function getUserSessions(userId, { limit = 50, offset = 0 } = {}) {
   return data || [];
 }
 
-async function getSessionById(sessionId) {
+async function getSessionById(sessionId, userId = null) {
   const db = getClient();
   if (!db) return null;
 
-  const { data, error } = await db
-    .from("sessions")
-    .select("*")
-    .eq("id", sessionId)
-    .single();
+  let query = db.from("sessions").select("*").eq("id", sessionId);
+  if (userId) query = query.eq("user_id", userId);
+  const { data, error } = await query.single();
 
   if (error) return null;
   return data;

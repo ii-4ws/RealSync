@@ -40,8 +40,8 @@ function buildAlert({ severity, category, title, message, model, confidence, fac
     alertId: uuidv4(),
     severity,
     category,
-    title,
-    message,
+    title: typeof title === "string" ? title.slice(0, 200) : "Alert",
+    message: typeof message === "string" ? message.slice(0, 1000) : "",
     source: { model: model || "fusion", confidence: confidence || 0 },
     ts: new Date().toISOString(),
   };
