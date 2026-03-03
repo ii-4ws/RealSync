@@ -7,8 +7,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Search, FileText, ArrowLeft, AlertTriangle, Clock, ShieldCheck, ShieldAlert, MessageSquare, Loader2, Download } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { authFetch } from '../../lib/api';
+import { useWebSocket } from '../../contexts/WebSocketContext';
 import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import autoTable, { type CellHookData } from 'jspdf-autotable';
+
+interface JsPDFWithPlugin extends jsPDF {
+  lastAutoTable?: { finalY: number };
+}
 
 interface ReportsScreenProps {
   onNavigate: (screen: 'login' | 'dashboard' | 'sessions' | 'reports' | 'settings' | 'faq') => void;
@@ -16,6 +21,9 @@ interface ReportsScreenProps {
   profilePhoto?: string | null;
   userName?: string;
   userEmail?: string;
+  activeSessionId?: string | null;
+  onNewSession?: () => void;
+  onEndSession?: () => void;
 }
 
 /** Session summary from GET /api/sessions */
@@ -92,7 +100,77 @@ function getOverallRisk(breakdown: SessionReport['summary']['severityBreakdown']
   return 'low';
 }
 
-export function ReportsScreen({ onNavigate, onSignOut, profilePhoto, userName, userEmail }: ReportsScreenProps) {
+function SkeletonBlock({ className = '' }: { className?: string }) {
+  return <div className={`bg-gray-800 animate-pulse rounded ${className}`} />;
+}
+
+function ReportDetailSkeleton() {
+  return (
+    <div className="space-y-6">
+      {/* Header skeleton */}
+      <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <SkeletonBlock className="h-7 w-64 mb-3" />
+            <div className="flex gap-4">
+              <SkeletonBlock className="h-4 w-36" />
+              <SkeletonBlock className="h-4 w-24" />
+              <SkeletonBlock className="h-4 w-20" />
+            </div>
+          </div>
+          <SkeletonBlock className="h-7 w-24 rounded-full" />
+        </div>
+      </div>
+
+      {/* Stats cards skeleton */}
+      <div className="grid grid-cols-4 gap-6">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
+            <div className="flex items-center gap-2 mb-3">
+              <SkeletonBlock className="h-5 w-5 rounded" />
+              <SkeletonBlock className="h-4 w-24" />
+            </div>
+            <SkeletonBlock className="h-10 w-16 mt-2" />
+          </div>
+        ))}
+      </div>
+
+      {/* Severity bar skeleton */}
+      <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
+        <SkeletonBlock className="h-5 w-40 mb-4" />
+        <div className="flex gap-4 mb-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <SkeletonBlock key={i} className="h-4 w-20" />
+          ))}
+        </div>
+        <SkeletonBlock className="h-4 w-full rounded-full" />
+      </div>
+
+      {/* Alert timeline + transcript skeleton */}
+      <div className="grid grid-cols-2 gap-6">
+        {Array.from({ length: 2 }).map((_, col) => (
+          <div key={col} className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
+            <SkeletonBlock className="h-5 w-32 mb-4" />
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex gap-3 items-start">
+                  <SkeletonBlock className="h-4 w-4 rounded-full flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 space-y-2">
+                    <SkeletonBlock className="h-4 w-3/4" />
+                    <SkeletonBlock className="h-3 w-1/2" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function ReportsScreen({ onNavigate, onSignOut, profilePhoto, userName, userEmail, activeSessionId, onNewSession, onEndSession }: ReportsScreenProps) {
+  const { isConnected: wsConnected } = useWebSocket();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -307,8 +385,7 @@ export function ReportsScreen({ onNavigate, onSignOut, profilePhoto, userName, u
       margin: { left: 18, right: 18 },
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    y = (doc as any).lastAutoTable.finalY + 12;
+    y = (doc as JsPDFWithPlugin).lastAutoTable!.finalY + 12;
 
     // ── Alert Timeline ──
     if (alerts.length > 0) {
@@ -338,11 +415,11 @@ export function ReportsScreen({ onNavigate, onSignOut, profilePhoto, userName, u
         alternateRowStyles: { fillColor: [245, 247, 250] },
         columnStyles: { 4: { cellWidth: 55 } },
         margin: { left: 14, right: 14 },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        didParseCell: (data: any) => {
+        didParseCell: (data: CellHookData) => {
           // Color severity column
           if (data.section === 'body' && data.column.index === 1) {
-            const sev = (data.row.raw?.[1] || '').toLowerCase();
+            const raw = data.row.raw;
+            const sev = (Array.isArray(raw) ? String(raw[1] ?? '') : '').toLowerCase();
             if (sev === 'critical') data.cell.styles.textColor = [239, 68, 68];
             else if (sev === 'high') data.cell.styles.textColor = [249, 115, 22];
             else if (sev === 'medium') data.cell.styles.textColor = [234, 179, 8];
@@ -351,8 +428,7 @@ export function ReportsScreen({ onNavigate, onSignOut, profilePhoto, userName, u
         },
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      y = (doc as any).lastAutoTable.finalY + 12;
+      y = (doc as JsPDFWithPlugin).lastAutoTable!.finalY + 12;
     }
 
     // ── Transcript ──
@@ -387,8 +463,7 @@ export function ReportsScreen({ onNavigate, onSignOut, profilePhoto, userName, u
     }
 
     // ── Footer on all pages ──
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const totalPages = (doc as any).internal.getNumberOfPages();
+    const totalPages = doc.getNumberOfPages();
     for (let i = 1; i <= totalPages; i++) {
       doc.setPage(i);
       // Footer line
@@ -419,7 +494,7 @@ export function ReportsScreen({ onNavigate, onSignOut, profilePhoto, userName, u
         <Sidebar currentScreen="reports" onNavigate={onNavigate} />
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          <TopBar title="Report Detail" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />
+          <TopBar title="Report Detail" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} isConnected={wsConnected} activeSessionId={activeSessionId} onNewSession={onNewSession} onEndSession={onEndSession} />
 
           <div className="flex-1 overflow-y-auto p-8">
             {/* Back + Download buttons */}
@@ -444,10 +519,7 @@ export function ReportsScreen({ onNavigate, onSignOut, profilePhoto, userName, u
             </div>
 
             {detailLoading ? (
-              <div className="flex items-center justify-center h-64">
-                <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
-                <span className="ml-3 text-gray-400">Loading report...</span>
-              </div>
+              <ReportDetailSkeleton />
             ) : (
               <>
                 {/* Report Header */}
@@ -627,7 +699,7 @@ export function ReportsScreen({ onNavigate, onSignOut, profilePhoto, userName, u
       <Sidebar currentScreen="reports" onNavigate={onNavigate} />
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar title="Meeting Analysis Reports" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />
+        <TopBar title="Meeting Analysis Reports" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} isConnected={wsConnected} activeSessionId={activeSessionId} onNewSession={onNewSession} onEndSession={onEndSession} />
 
         <div className="flex-1 overflow-y-auto p-8">
           {/* Search Bar */}

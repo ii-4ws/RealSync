@@ -278,6 +278,9 @@ async function generateReport(sessionId) {
       .eq("session_id", sessionId),
   ]);
 
+  if (alertsRes.error) log.warn("persistence", "Failed to fetch alerts for report", alertsRes.error);
+  if (transcriptRes.error) log.warn("persistence", "Failed to fetch transcript for report", transcriptRes.error);
+
   const alertRows = alertsRes.data || [];
   const alertCount = alertRows.length;
   const transcriptCount = transcriptRes.count || 0;
@@ -350,10 +353,9 @@ async function getUserNotifications(userId, { limit = 50, offset = 0 } = {}) {
         ts,
         created_at,
         sessions!inner(user_id),
-        notification_reads!left(read_at)
+        notification_reads!left(read_at, user_id)
       `)
       .eq("sessions.user_id", userId)
-      .eq("notification_reads.user_id", userId)
       .order("ts", { ascending: false })
       .range(offset, offset + limit - 1),
     db.rpc("get_unread_notification_count", { p_user_id: userId }),
@@ -375,7 +377,7 @@ async function getUserNotifications(userId, { limit = 50, offset = 0 } = {}) {
     sourceModel: row.source_model,
     recommendation: row.recommendation || null,
     ts: row.ts,
-    read: row.notification_reads && row.notification_reads.length > 0,
+    read: Array.isArray(row.notification_reads) && row.notification_reads.some(r => r.user_id === userId),
   }));
 
   // Use RPC result as primary; fall back to client-side count if RPC failed
@@ -460,6 +462,58 @@ async function getUnreadNotificationCount(userId) {
   return data ?? 0;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Detection settings                                                 */
+/* ------------------------------------------------------------------ */
+
+const DEFAULT_DETECTION_SETTINGS = {
+  facialAnalysis: true,
+  voicePattern: true,
+  emotionDetection: true,
+};
+
+async function getDetectionSettings(userId) {
+  const db = getClient();
+  if (!db) return { ...DEFAULT_DETECTION_SETTINGS };
+
+  const { data, error } = await db
+    .from("profiles")
+    .select("detection_settings")
+    .eq("id", userId)
+    .single();
+
+  if (error || !data) return { ...DEFAULT_DETECTION_SETTINGS };
+  return { ...DEFAULT_DETECTION_SETTINGS, ...data.detection_settings };
+}
+
+async function updateDetectionSettings(userId, settings) {
+  const db = getClient();
+  if (!db) return { ok: true, stub: true };
+
+  // Whitelist allowed keys
+  const allowed = ["facialAnalysis", "voicePattern", "emotionDetection"];
+  const cleaned = {};
+  for (const key of allowed) {
+    if (typeof settings[key] === "boolean") {
+      cleaned[key] = settings[key];
+    }
+  }
+
+  const { error } = await db
+    .from("profiles")
+    .update({
+      detection_settings: cleaned,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", userId);
+
+  if (error) {
+    log.warn("persistence", `updateDetectionSettings error: ${error.message}`);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true };
+}
+
 /** Returns true if Supabase client is configured and available. */
 function isAvailable() {
   return getClient() !== null;
@@ -484,5 +538,8 @@ module.exports = {
   markNotificationsRead,
   markAllNotificationsRead,
   getUnreadNotificationCount,
+  getDetectionSettings,
+  updateDetectionSettings,
+  DEFAULT_DETECTION_SETTINGS,
   isAvailable,
 };

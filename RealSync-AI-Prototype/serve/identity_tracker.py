@@ -21,9 +21,11 @@ from serve.config import (
     FACENET_PRETRAINED,
     IDENTITY_SHIFT_LOW,
     IDENTITY_SHIFT_HIGH,
+    SESSION_TTL_SECONDS,
+    IDENTITY_SAME_PERSON_THRESHOLD,
+    IDENTITY_EMA_ALPHA,
+    SESSION_EVICTION_TRIGGER,
 )
-
-SESSION_TTL_SECONDS = 3600
 
 # Lazy-loaded FaceNet model (singleton)
 _facenet_model = None
@@ -149,7 +151,7 @@ class IdentityTracker:
         with self._lock:
             self._last_access[session_id] = time.time()
 
-            if len(self._baselines) > 50:
+            if len(self._baselines) > SESSION_EVICTION_TRIGGER:
                 self._evict_stale_sessions()
 
             if session_id not in self._baselines:
@@ -181,11 +183,10 @@ class IdentityTracker:
             else:
                 risk = "high"
 
-            same_person = shift < 0.25
+            same_person = shift < IDENTITY_SAME_PERSON_THRESHOLD
 
             # Slowly update baseline (exponential moving average)
-            alpha = 0.1
-            baselines[face_id] = (1 - alpha) * baseline + alpha * embedding
+            baselines[face_id] = (1 - IDENTITY_EMA_ALPHA) * baseline + IDENTITY_EMA_ALPHA * embedding
             # Re-normalize
             norm = np.linalg.norm(baselines[face_id])
             if norm > 0:

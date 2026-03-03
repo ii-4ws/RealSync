@@ -8,17 +8,12 @@
  */
 
 const log = require("./logger");
+const { EMOTIONS } = require("./constants");
 
 const AI_SERVICE_URL =
   process.env.AI_SERVICE_URL || "http://localhost:5100";
 const ANALYZE_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 5000);
 const AI_API_KEY = process.env.AI_API_KEY || "";
-
-/* ------------------------------------------------------------------ */
-/*  Mock response (matches contracts/ai-inference.schema.json)         */
-/* ------------------------------------------------------------------ */
-
-const EMOTIONS = ["Happy", "Neutral", "Angry", "Fear", "Surprise", "Sad"];
 
 function generateMockResponse(sessionId, capturedAt) {
   const now = new Date().toISOString();

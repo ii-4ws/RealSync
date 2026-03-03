@@ -12,9 +12,17 @@ Output: {"signals": [...], "highestScore": float, "model": str}
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
+from serve.config import (
+    TEXT_ALERT_THRESHOLD,
+    TEXT_HIGH_SEVERITY_THRESHOLD,
+    TEXT_MAX_LENGTH,
+    TEXT_EXECUTOR_WORKERS,
+    TEXT_INFERENCE_TIMEOUT,
+)
+
 MODEL_ID = "MoritzLaurer/deberta-v3-base-zeroshot-v2.0"
 MODEL_NAME = "DeBERTa-v3-NLI"
-MAX_TEXT_LENGTH = 2000
+MAX_TEXT_LENGTH = TEXT_MAX_LENGTH
 
 # Behavioral hypotheses and their categories
 HYPOTHESES = [
@@ -41,8 +49,8 @@ HYPOTHESES = [
 ]
 
 # Severity thresholds
-ALERT_THRESHOLD = 0.65
-HIGH_SEVERITY_THRESHOLD = 0.80
+ALERT_THRESHOLD = TEXT_ALERT_THRESHOLD
+HIGH_SEVERITY_THRESHOLD = TEXT_HIGH_SEVERITY_THRESHOLD
 
 
 # ---------------------------------------------------------------
@@ -53,7 +61,7 @@ _pipeline = None
 _lock = threading.Lock()
 # max_workers=2 ensures that even if one task is blocked by the 5s timeout
 # in analyze_text(), a second worker is available for the next request.
-_text_executor = ThreadPoolExecutor(max_workers=2)
+_text_executor = ThreadPoolExecutor(max_workers=TEXT_EXECUTOR_WORKERS)
 
 
 def get_text_analyzer():
@@ -106,15 +114,15 @@ def analyze_text(text: str) -> dict:
         candidate_labels = [h["hypothesis"] for h in HYPOTHESES]
         future = _text_executor.submit(pipe, text, candidate_labels, multi_label=True)
         try:
-            result = future.result(timeout=5)
+            result = future.result(timeout=TEXT_INFERENCE_TIMEOUT)
         except FuturesTimeout:
             # Note: future.cancel() only prevents execution of futures that are
             # still queued in the thread pool.  Once a future is already running,
-            # cancel() is a no-op (Python limitation).  With max_workers=2 the
+            # cancel() is a no-op (Python limitation).  With max_workers=TEXT_EXECUTOR_WORKERS the
             # timed-out task will finish in the background; the next submission
             # still gets a free worker slot.
             future.cancel()
-            print("[text] Analysis timed out (5s)")
+            print(f"[text] Analysis timed out ({TEXT_INFERENCE_TIMEOUT}s)")
             return {"signals": [], "highestScore": 0.0, "model": MODEL_NAME}
 
         # Build signals list

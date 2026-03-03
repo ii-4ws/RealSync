@@ -12,6 +12,8 @@
  */
 
 const { v4: uuidv4 } = require("uuid");
+const path = require("path");
+const fs = require("fs");
 const log = require("../lib/logger");
 
 const USE_REAL_BOT = process.env.REALSYNC_BOT_MODE === "real";
@@ -52,20 +54,31 @@ const scheduledTimers = new Map();
 /* ------------------------------------------------------------------ */
 
 /**
- * Generates a simulated video frame (1x1 black JPEG as base64).
- * In production this will be a real Puppeteer screenshot.
+ * Load a test frame (640x480 face) for stub mode.
+ * Falls back to a 1x1 black JPEG if file not found.
  */
-function generateStubFrame() {
-  // Minimal valid JPEG (1x1 black pixel)
-  const jpegBytes = Buffer.from(
+const TEST_FRAME_PATH = path.join(__dirname, "test-frame.jpg");
+let _stubFrameB64 = null;
+let _stubFrameWidth = 1;
+let _stubFrameHeight = 1;
+try {
+  _stubFrameB64 = fs.readFileSync(TEST_FRAME_PATH).toString("base64");
+  _stubFrameWidth = 640;
+  _stubFrameHeight = 480;
+  log.info("botManager", "Loaded test-frame.jpg for stub mode");
+} catch {
+  // Fallback: minimal valid JPEG (1x1 black pixel)
+  _stubFrameB64 =
     "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP" +
-      "//////////////////////////////////////////////////////////////////////////////////////" +
-      "2wBDAf//////////////////////////////////////////////////////////////////////////////////////" +
-      "wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEA" +
-      "AAAAAAAAAAAAAAAAAAAAA//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AKgA/9k=",
-    "base64"
-  );
-  return jpegBytes.toString("base64");
+    "//////////////////////////////////////////////////////////////////////////////////////" +
+    "2wBDAf//////////////////////////////////////////////////////////////////////////////////////" +
+    "wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEA" +
+    "AAAAAAAAAAAAAAAAAAAAA//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AKgA/9k=";
+  log.warn("botManager", "test-frame.jpg not found, using 1x1 fallback");
+}
+
+function generateStubFrame() {
+  return _stubFrameB64;
 }
 
 /**
@@ -141,8 +154,8 @@ function startStubBot({ sessionId, meetingUrl, displayName, onIngestMessage }) {
         onIngestMessage({
           type: "frame",
           dataB64: generateStubFrame(),
-          width: 1280,
-          height: 720,
+          width: _stubFrameWidth,
+          height: _stubFrameHeight,
           capturedAt: new Date().toISOString(),
         });
 
@@ -167,6 +180,9 @@ function startStubBot({ sessionId, meetingUrl, displayName, onIngestMessage }) {
 /*  Real Puppeteer bot implementation                                  */
 /* ------------------------------------------------------------------ */
 
+const JOIN_TIMEOUT_MS = 90_000;  // 90 seconds max for a join attempt
+const MAX_JOIN_RETRIES = 2;
+
 async function startRealBot({ sessionId, meetingUrl, displayName, onIngestMessage }) {
   if (!ZoomBotAdapter) {
     log.warn("botManager", "ZoomBotAdapter not available, falling back to stub");
@@ -184,28 +200,66 @@ async function startRealBot({ sessionId, meetingUrl, displayName, onIngestMessag
     status: "joining",
     adapter,
     _stubInterval: null,
+    _joinTimeout: null,
   };
 
   bots.set(sessionId, bot);
 
-  // Start join in background (don't await — let it happen async)
-  adapter
-    .join()
-    .then(() => {
-      bot.status = "connected";
-    })
-    .catch(async (err) => {
-      log.error("botManager", `Real bot failed for ${sessionId}: ${err.message}`);
-      bot.status = "disconnected";
-      try { await adapter.leave(); } catch (_) { /* best-effort cleanup */ }
-      // Only fall back if the session bot wasn't already stopped
-      if (bots.has(sessionId)) {
+  /**
+   * Attempt to join with retry logic (H6) and join timeout (H5).
+   */
+  function attemptJoin(retryCount = 0) {
+    // H5: Set a join timeout that forces status transition
+    bot._joinTimeout = setTimeout(() => {
+      if (bot.status === "joining" && !bot.cancelled) {
+        log.warn("botManager", `Join timed out for ${sessionId} (attempt ${retryCount + 1}) — falling back to stub`);
+        bot.status = "disconnected";
+        adapter.leave().catch(() => {});
         bots.delete(sessionId);
-        log.info("botManager", "Falling back to stub bot...");
         startStubBot({ sessionId, meetingUrl, displayName, onIngestMessage });
       }
-    });
+    }, JOIN_TIMEOUT_MS);
 
+    adapter
+      .join()
+      .then(() => {
+        clearTimeout(bot._joinTimeout);
+        bot._joinTimeout = null;
+        if (bot.cancelled) return;
+        bot.status = "connected";
+      })
+      .catch(async (err) => {
+        clearTimeout(bot._joinTimeout);
+        bot._joinTimeout = null;
+        if (bot.cancelled) return;
+
+        log.error("botManager", `Real bot failed for ${sessionId} (attempt ${retryCount + 1}/${MAX_JOIN_RETRIES + 1}): ${err.message}`);
+
+        // H6: Retry with exponential backoff before falling back
+        if (retryCount < MAX_JOIN_RETRIES && bots.has(sessionId) && !bot.cancelled) {
+          const backoffMs = 1000 * Math.pow(2, retryCount); // 1s, 2s
+          log.info("botManager", `Retrying join for ${sessionId} in ${backoffMs}ms (retry ${retryCount + 1}/${MAX_JOIN_RETRIES})`);
+          bot.status = "joining";
+          setTimeout(() => {
+            if (bots.has(sessionId) && bot.status === "joining") {
+              attemptJoin(retryCount + 1);
+            }
+          }, backoffMs);
+          return;
+        }
+
+        // Final failure — fall back to stub
+        bot.status = "disconnected";
+        try { await adapter.leave(); } catch { /* best-effort cleanup */ }
+        if (bots.has(sessionId)) {
+          bots.delete(sessionId);
+          log.info("botManager", "All retries exhausted, falling back to stub bot...");
+          startStubBot({ sessionId, meetingUrl, displayName, onIngestMessage });
+        }
+      });
+  }
+
+  attemptJoin(0);
   return { botId, status: "joining" };
 }
 
@@ -331,6 +385,7 @@ function stopBot(sessionId, onIngestMessage) {
   }
 
   bot.status = "disconnected";
+  bot.cancelled = true;
 
   if (onIngestMessage) {
     onIngestMessage({

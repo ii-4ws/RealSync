@@ -20,6 +20,7 @@ interface DashboardScreenProps {
   sessionId?: string | null;
   meetingTitle?: string | null;
   meetingType?: MeetingType | null;
+  onNewSession?: () => void;
 }
 
 type EmotionLabel = 'Happy' | 'Neutral' | 'Angry' | 'Fear' | 'Surprise' | 'Sad';
@@ -121,6 +122,8 @@ const getRiskColor = (risk: RiskLevel) => {
   return 'text-green-400';
 };
 
+const TRUST_CIRCLE_RADIUS = 88;
+
 export function DashboardScreen({
   onNavigate,
   onSignOut,
@@ -132,6 +135,7 @@ export function DashboardScreen({
   sessionId,
   meetingTitle,
   meetingType,
+  onNewSession,
 }: DashboardScreenProps) {
   const gradientId = useId();
   const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -202,12 +206,16 @@ export function DashboardScreen({
 
     if (message?.type === 'participants' && Array.isArray(message?.participants)) {
       const safe = (message.participants as unknown[]).filter(
-        (p): p is ParticipantEntry =>
-          typeof p === 'object' && p !== null &&
-          typeof (p as any).faceId === 'number' &&
-          Number.isFinite((p as any).faceId) &&
-          (p as any).faceId >= 0 && (p as any).faceId < 20 &&
-          (typeof (p as any).name === 'string' || (p as any).name === undefined)
+        (p): p is ParticipantEntry => {
+          if (typeof p !== 'object' || p === null) return false;
+          const rec = p as Record<string, unknown>;
+          return (
+            typeof rec.faceId === 'number' &&
+            Number.isFinite(rec.faceId) &&
+            rec.faceId >= 0 && rec.faceId < 20 &&
+            (typeof rec.name === 'string' || rec.name === undefined)
+          );
+        }
       );
       setParticipants(safe);
       return;
@@ -286,7 +294,7 @@ export function DashboardScreen({
 
   const displayMetrics = metrics ?? getFallbackMetrics();
   const trustScorePercent = toPercent(displayMetrics.trustScore);
-  const trustDash = (2 * Math.PI * 88 * trustScorePercent) / 100;
+  const trustDash = (2 * Math.PI * TRUST_CIRCLE_RADIUS * trustScorePercent) / 100;
   const lastUpdatedLabel = displayMetrics.timestamp
     ? new Date(displayMetrics.timestamp).toLocaleTimeString()
     : '--:--';
@@ -302,7 +310,7 @@ export function DashboardScreen({
   }, [displayMetrics]);
 
   const alerts = useMemo(() => {
-    const items: Array<{ type: 'error' | 'warning' | 'ok'; message: string; time: string }> = [];
+    const items: Array<{ id: string; type: 'error' | 'warning' | 'ok'; message: string; time: string }> = [];
 
     // Filter by selected participant
     const filteredEvents = selectedFaceId !== null
@@ -312,6 +320,7 @@ export function DashboardScreen({
     // Prioritize real alert events from the alert fusion engine
     filteredEvents.slice(0, 5).forEach((alert) => {
       items.push({
+        id: alert.alertId,
         type: alert.severity === 'critical' || alert.severity === 'high' ? 'error' : 'warning',
         message: `[${alert.category}] ${alert.title}: ${alert.message}`,
         time: new Date(alert.ts).toLocaleTimeString(),
@@ -322,6 +331,7 @@ export function DashboardScreen({
     if (filteredEvents.length === 0) {
       if (displayMetrics.deepfake.riskLevel !== 'low') {
         items.push({
+          id: 'metric-deepfake',
           type: displayMetrics.deepfake.riskLevel === 'high' ? 'error' : 'warning',
           message: 'Potential visual manipulation detected.',
           time: 'just now',
@@ -330,6 +340,7 @@ export function DashboardScreen({
 
       if (displayMetrics.identity.riskLevel !== 'low') {
         items.push({
+          id: 'metric-identity',
           type: displayMetrics.identity.riskLevel === 'high' ? 'error' : 'warning',
           message: 'Face embedding drift above baseline.',
           time: 'just now',
@@ -338,6 +349,7 @@ export function DashboardScreen({
 
       if (displayMetrics.emotion.label !== 'Neutral' && displayMetrics.emotion.confidence > 0.7) {
         items.push({
+          id: 'metric-emotion',
           type: 'warning',
           message: `Elevated ${displayMetrics.emotion.label.toLowerCase()} expression detected.`,
           time: 'just now',
@@ -347,6 +359,7 @@ export function DashboardScreen({
 
     if (items.length === 0) {
       items.push({
+        id: 'all-ok',
         type: 'ok',
         message: 'All systems normal.',
         time: 'just now',
@@ -407,7 +420,7 @@ export function DashboardScreen({
       <Sidebar currentScreen="dashboard" onNavigate={onNavigate} />
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar title="Dashboard" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />
+        <TopBar title="Dashboard" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} isConnected={wsConnected} activeSessionId={sessionId} onNewSession={onNewSession} onEndSession={handleEndSession} />
 
         <div className="flex-1 overflow-y-auto p-8">
           <div className="grid grid-cols-3 gap-6">
@@ -422,7 +435,7 @@ export function DashboardScreen({
                     <circle
                       cx="96"
                       cy="96"
-                      r="88"
+                      r={TRUST_CIRCLE_RADIUS}
                       stroke="#2a2a3e"
                       strokeWidth="12"
                       fill="none"
@@ -436,11 +449,11 @@ export function DashboardScreen({
                     <circle
                       cx="96"
                       cy="96"
-                      r="88"
+                      r={TRUST_CIRCLE_RADIUS}
                       stroke={`url(#${gradientId})`}
                       strokeWidth="12"
                       fill="none"
-                      strokeDasharray={`${trustDash} ${2 * Math.PI * 88}`}
+                      strokeDasharray={`${trustDash} ${2 * Math.PI * TRUST_CIRCLE_RADIUS}`}
                       strokeLinecap="round"
                     />
                   </svg>
@@ -522,7 +535,7 @@ export function DashboardScreen({
               {/* End Session button */}
               {sessionId && (
                 <Button
-                  className="mt-6 w-full bg-red-600 hover:bg-red-700 text-white"
+                  className="mt-6 w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2"
                   onClick={handleEndSession}
                   disabled={endingSession}
                 >
@@ -546,8 +559,8 @@ export function DashboardScreen({
               <h3 className="text-white text-lg mb-6">Live Alerts</h3>
 
               <div className="space-y-4">
-                {alerts.map((alert, index) => (
-                  <div key={index} className="flex gap-3">
+                {alerts.map((alert) => (
+                  <div key={alert.id} className="flex gap-3">
                     <div className="flex-shrink-0 mt-1">
                       {alert.type === 'error' ? (
                         <AlertCircle className="w-5 h-5 text-red-400" />

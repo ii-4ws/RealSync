@@ -11,8 +11,12 @@ Run:
 Or:
     uvicorn serve.app:app --host 0.0.0.0 --port 5100 --reload
 """
+import re
 import sys
 import os
+
+import cv2
+import numpy as np
 
 # Ensure the src directory is in the Python path for model imports
 SRC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src")
@@ -28,7 +32,11 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from serve.config import PORT, HOST
-from serve.inference import analyze_frame, get_identity_tracker, cleanup_session, _utcnow_iso
+from serve.inference import analyze_frame, get_identity_tracker, cleanup_session, _utcnow_iso, _get_face_detector
+from serve.deepfake_model import get_deepfake_model
+from serve.emotion_model import get_emotion_model
+from serve.audio_model import get_audio_model, predict_audio
+from serve.text_analyzer import get_text_analyzer, analyze_text as analyze_text_fn
 
 # API key for service-to-service auth (optional — if not set, auth is disabled)
 AI_API_KEY = os.getenv("AI_API_KEY", "").strip()
@@ -41,12 +49,6 @@ AI_API_KEY = os.getenv("AI_API_KEY", "").strip()
 async def lifespan(app: FastAPI):
     """Pre-load all models and warm up on startup."""
     print("[app] Pre-loading models...")
-    from serve.inference import _get_face_detector
-    from serve.deepfake_model import get_deepfake_model
-    from serve.emotion_model import get_emotion_model
-    from serve.audio_model import get_audio_model
-    from serve.text_analyzer import get_text_analyzer
-    import numpy as np
 
     face_det = _get_face_detector()
     deepfake = get_deepfake_model()
@@ -78,7 +80,6 @@ async def lifespan(app: FastAPI):
     try:
         dummy_img = np.zeros((256, 256, 3), dtype=np.uint8)
         if face_det is not None:
-            import cv2
             face_det.process(cv2.cvtColor(dummy_img, cv2.COLOR_BGR2RGB))
         if facenet is not None:
             dummy_face = np.zeros((160, 160, 3), dtype=np.uint8)
@@ -163,19 +164,16 @@ async def health():
     models = {}
 
     try:
-        from serve.deepfake_model import get_deepfake_model
         models["deepfake"] = "loaded" if get_deepfake_model() is not None else "unavailable"
     except Exception:
         models["deepfake"] = "error"
 
     try:
-        from serve.emotion_model import get_emotion_model
         models["emotion"] = "loaded" if get_emotion_model() is not None else "unavailable"
     except Exception:
         models["emotion"] = "error"
 
     try:
-        from serve.inference import _get_face_detector
         models["face_detection"] = "loaded" if _get_face_detector() is not None else "unavailable"
     except Exception:
         models["face_detection"] = "error"
@@ -187,13 +185,11 @@ async def health():
         models["identity"] = "error"
 
     try:
-        from serve.audio_model import get_audio_model
         models["audio"] = "loaded" if get_audio_model() is not None else "unavailable"
     except Exception:
         models["audio"] = "error"
 
     try:
-        from serve.text_analyzer import get_text_analyzer
         models["text"] = "loaded" if get_text_analyzer() is not None else "unavailable"
     except Exception:
         models["text"] = "error"
@@ -234,7 +230,6 @@ async def analyze_audio_endpoint(request: AnalyzeAudioRequest):
         raise HTTPException(status_code=413, detail="audioB64 payload exceeds 4MB limit")
 
     try:
-        from serve.audio_model import predict_audio
         result = await run_in_threadpool(predict_audio, request.audioB64)
         processed_at = _utcnow_iso()
         return {
@@ -259,8 +254,7 @@ async def analyze_text_endpoint(request: AnalyzeTextRequest):
         raise HTTPException(status_code=413, detail="text payload exceeds 50KB limit")
 
     try:
-        from serve.text_analyzer import analyze_text
-        result = await run_in_threadpool(analyze_text, request.text)
+        result = await run_in_threadpool(analyze_text_fn, request.text)
         processed_at = _utcnow_iso()
         return {
             "sessionId": request.sessionId,
@@ -275,7 +269,6 @@ async def analyze_text_endpoint(request: AnalyzeTextRequest):
 @app.post("/api/sessions/{session_id}/clear-identity")
 async def clear_identity(session_id: str):
     """Clear stored identity baselines, temporal buffer, and no-face counters for a session."""
-    import re
     if not session_id or len(session_id) > 64 or not re.match(r'^[a-zA-Z0-9_-]+$', session_id):
         raise HTTPException(status_code=400, detail="Invalid session_id format")
     cleanup_session(session_id)

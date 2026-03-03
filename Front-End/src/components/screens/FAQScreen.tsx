@@ -3,6 +3,7 @@ import { TopBar } from '../layout/TopBar';
 import { Input } from '../ui/input';
 import { Search, ChevronDown, ChevronUp, Mail } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { useWebSocket } from '../../contexts/WebSocketContext';
 
 type Screen = 'login' | 'dashboard' | 'sessions' | 'reports' | 'settings' | 'faq';
 
@@ -12,6 +13,9 @@ interface FAQScreenProps {
   profilePhoto?: string | null;
   userName?: string;
   userEmail?: string;
+  activeSessionId?: string | null;
+  onNewSession?: () => void;
+  onEndSession?: () => void;
 }
 
 interface FAQItem {
@@ -83,7 +87,8 @@ const faqs: FAQItem[] = [
   },
 ];
 
-export function FAQScreen({ onNavigate, onSignOut, profilePhoto, userName, userEmail }: FAQScreenProps) {
+export function FAQScreen({ onNavigate, onSignOut, profilePhoto, userName, userEmail, activeSessionId, onNewSession, onEndSession }: FAQScreenProps) {
+  const { isConnected: wsConnected } = useWebSocket();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
@@ -108,7 +113,7 @@ export function FAQScreen({ onNavigate, onSignOut, profilePhoto, userName, userE
       <Sidebar currentScreen="faq" onNavigate={onNavigate} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar title="Help & Support" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />
+        <TopBar title="Help & Support" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} isConnected={wsConnected} activeSessionId={activeSessionId} onNewSession={onNewSession} onEndSession={onEndSession} />
         
         <div className="flex-1 overflow-y-auto p-8">
           <div className="max-w-4xl mx-auto">

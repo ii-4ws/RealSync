@@ -16,11 +16,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from serve.config import AASIST_WEIGHTS_PATH, DEEPFAKE_AUTH_THRESHOLD_LOW_RISK, DEEPFAKE_AUTH_THRESHOLD_HIGH_RISK
+from serve.config import (
+    AASIST_WEIGHTS_PATH,
+    DEEPFAKE_AUTH_THRESHOLD_LOW_RISK,
+    DEEPFAKE_AUTH_THRESHOLD_HIGH_RISK,
+    AUDIO_SAMPLE_RATE,
+    AUDIO_TARGET_LENGTH,
+)
 
 MODEL_NAME = "AASIST"
-SAMPLE_RATE = 16000
-TARGET_LENGTH = 64000  # 4 seconds at 16kHz
+SAMPLE_RATE = AUDIO_SAMPLE_RATE
+TARGET_LENGTH = AUDIO_TARGET_LENGTH
 
 
 # ---------------------------------------------------------------

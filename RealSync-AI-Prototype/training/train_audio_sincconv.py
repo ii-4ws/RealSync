@@ -47,12 +47,13 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEIGHTS_OUT = os.path.join(BASE_DIR, "src", "models", "aasist_weights.pth")
 
 SAMPLE_RATE = 16000
-TARGET_LENGTH = 64000  # 4 seconds at 16kHz (matches inference TARGET_LENGTH in audio_model.py)
-BATCH_SIZE = 16
-EPOCHS = 20
-LEARNING_RATE = 1e-3
+TARGET_LENGTH = 16000  # 1 second at 16kHz (4x faster training; model is length-agnostic)
+BATCH_SIZE = 32
+EPOCHS = 50
+LEARNING_RATE = 1e-4  # Gentler updates for SincConv
 NUM_WORKERS = 0  # HuggingFace audio decoding doesn't work well with multiprocessing
-PATIENCE = 5
+PATIENCE = 10
+WARMUP_EPOCHS = 3  # Linear warmup before cosine decay
 
 DEVICE = (
     "mps" if torch.backends.mps.is_available()
@@ -370,8 +371,17 @@ def train(args):
     # H24: BCEWithLogitsLoss is numerically stable (model forward no longer applies sigmoid)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.01)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs, eta_min=1e-6
+
+    # B2: Warmup + cosine decay scheduler
+    warmup_epochs = min(WARMUP_EPOCHS, args.epochs // 5)
+    cosine_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(args.epochs - warmup_epochs, 1), eta_min=1e-6
+    )
+    warmup_scheduler = optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
+    )
+    scheduler = optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs]
     )
 
     best_val_loss = float('inf')

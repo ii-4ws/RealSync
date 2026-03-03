@@ -288,7 +288,7 @@ export function LoginScreen({ onSwitchToSignUp, oauthError, onClearOAuthError }:
                     }}
                     className="w-full text-center text-gray-400 text-sm hover:text-gray-300 transition-colors"
                   >
-                    \u2190 Back to sign in
+                    ← Back to sign in
                   </button>
                 </div>
               </>

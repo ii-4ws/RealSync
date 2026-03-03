@@ -21,9 +21,11 @@ from serve.config import (
     TEMPORAL_IDENTITY_SWITCH_LOW,
     TEMPORAL_IDENTITY_SWITCH_HIGH,
     TEMPORAL_EMOTION_CHANGE_THRESHOLD,
+    SESSION_TTL_SECONDS,
+    TEMPORAL_EWMA_DECAY,
+    TEMPORAL_TREND_THRESHOLD,
+    SESSION_EVICTION_TRIGGER,
 )
-
-SESSION_TTL_SECONDS = 3600
 
 
 class TemporalAnalyzer:
@@ -74,7 +76,7 @@ class TemporalAnalyzer:
         with self._lock:
             self._last_access[session_id] = time.time()
 
-            if len(self._buffers) > 50:
+            if len(self._buffers) > SESSION_EVICTION_TRIGGER:
                 self._evict_stale_sessions()
 
             if session_id not in self._buffers:
@@ -124,12 +126,11 @@ class TemporalAnalyzer:
         if not buf:
             return 0.5
 
-        decay = 0.85
         scores = [s["trustScore"] for s in buf]
 
         ewma = scores[0]
         for i in range(1, len(scores)):
-            ewma = decay * ewma + (1 - decay) * scores[i]
+            ewma = TEMPORAL_EWMA_DECAY * ewma + (1 - TEMPORAL_EWMA_DECAY) * scores[i]
 
         return max(0.0, min(1.0, ewma))
 
@@ -148,9 +149,9 @@ class TemporalAnalyzer:
         last_avg = np.mean(scores[-5:])
 
         diff = last_avg - first_avg
-        if diff > 0.05:
+        if diff > TEMPORAL_TREND_THRESHOLD:
             return "improving"
-        elif diff < -0.05:
+        elif diff < -TEMPORAL_TREND_THRESHOLD:
             return "declining"
         return "stable"
 

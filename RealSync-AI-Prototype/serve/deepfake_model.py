@@ -2,8 +2,8 @@
 EfficientNet-B4 + SBI deepfake detection model — replaces MesoNet-4.
 
 Binary classification: real (1.0) vs fake (0.0).
-Uses EfficientNet-B4 backbone with a single sigmoid output.
-Loads SBI-trained weights if available, falls back to ImageNet pretrained.
+Uses EfficientNet-B4 backbone (ImageNet pretrained) with a single sigmoid output.
+Loads fine-tuned weights if available; ImageNet features used as baseline.
 
 Input: BGR face crop (any size, resized to 380x380 internally).
 Output: {"authenticityScore": float, "riskLevel": str, "model": str}
@@ -36,7 +36,7 @@ class EfficientNetDeepfake(nn.Module):
 
     def __init__(self):
         super().__init__()
-        backbone = models.efficientnet_b4(weights=None)
+        backbone = models.efficientnet_b4(weights=models.EfficientNet_B4_Weights.IMAGENET1K_V1)
         # Replace classifier: 1792 -> 1 (sigmoid)
         in_features = backbone.classifier[1].in_features
         backbone.classifier = nn.Sequential(
@@ -118,7 +118,14 @@ def predict_deepfake(face_crop_bgr: np.ndarray) -> dict:
             raw = model(tensor)  # (1, 1)
             prediction = float(raw[0][0])
 
-        # Model outputs P(fake). Convert to authenticity: 1 = real, 0 = fake.
+        # SBI label convention: label=0 → real, label=1 → fake.
+        # Original SBI uses 2-class softmax; softmax[:,1] = P(fake).
+        # Our model uses 1-class sigmoid (classifier re-initialized, not transferred).
+        # Convention: sigmoid output ≈ P(fake), so authenticity = 1 - P(fake).
+        # NOTE: Classifier head was randomly initialized during weight conversion
+        # (SBI 2-class → our 1-class shape mismatch). Backbone features are SBI-trained
+        # but the final layer needs fine-tuning on labeled deepfake data for reliable
+        # predictions. Without fine-tuning, outputs hover near 0.5.
         authenticity = round(1.0 - prediction, 4)
 
         if authenticity > DEEPFAKE_AUTH_THRESHOLD_LOW_RISK:

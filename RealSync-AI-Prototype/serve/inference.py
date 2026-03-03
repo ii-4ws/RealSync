@@ -32,6 +32,14 @@ from serve.config import (
     FACE_PADDING_PERCENT,
     FACE_CROP_SIZE,
     EMOTION_LABELS,
+    TRUST_WEIGHT_VIDEO,
+    TRUST_WEIGHT_IDENTITY,
+    TRUST_WEIGHT_BEHAVIOR,
+    BEHAVIOR_BASELINE_SCALE,
+    NO_FACE_THRESHOLD,
+    NO_FACE_COUNTER_MAX,
+    NO_FACE_EVICT_BATCH,
+    TEMPORAL_SMOOTHING_MIN_FRAMES,
 )
 from serve.identity_tracker import IdentityTracker
 from serve.temporal_analyzer import TemporalAnalyzer
@@ -48,7 +56,6 @@ _temporal_analyzer = TemporalAnalyzer(window_size=15)
 
 # Camera-off tracking: consecutive no-face frames per session
 _no_face_counters: Dict[str, int] = {}
-_NO_FACE_THRESHOLD = 5  # frames before declaring camera-off
 
 # Per-thread MediaPipe face detector (avoids global lock serialization)
 _thread_local = threading.local()
@@ -235,7 +242,7 @@ def analyze_identity(
 # Main pipeline
 # ---------------------------------------------------------------
 
-def analyze_frame(session_id: str, frame_b64: str, captured_at: str = None) -> Dict:
+def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = None) -> Dict:
     """
     Full analysis pipeline for a single frame.
 
@@ -261,13 +268,13 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: str = None) -> D
         # Track consecutive no-face frames for camera-off detection
         with _no_face_lock:
             # I3: Evict oldest half of counters if unbounded growth exceeds 500 entries
-            if len(_no_face_counters) > 500:
+            if len(_no_face_counters) > NO_FACE_COUNTER_MAX:
                 keys = list(_no_face_counters.keys())
-                for k in keys[:250]:
+                for k in keys[:NO_FACE_EVICT_BATCH]:
                     del _no_face_counters[k]
             _no_face_counters[session_id] = _no_face_counters.get(session_id, 0) + 1
             count = _no_face_counters[session_id]
-        if count >= _NO_FACE_THRESHOLD:
+        if count >= NO_FACE_THRESHOLD:
             return _camera_off_response(session_id, captured_at)
         return _empty_response(session_id, captured_at)
 
@@ -309,13 +316,12 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: str = None) -> D
     audio_conf = None
     video_conf = effective_auth
     # H10: Neutral baseline — range 0.5 (no confidence) to 1.0 (full confidence)
-    behavior_conf = round(0.5 * (1.0 + emotion_conf), 4)
+    behavior_conf = round(BEHAVIOR_BASELINE_SCALE * (1.0 + emotion_conf), 4)
 
     # Weighted trust (video + identity + behavior) — no audio on AI side
-    # Weights: video=0.47, identity=0.33, behavior=0.20 (redistributed from 4-signal)
     identity_signal = 1.0 - shift
     trust_score = round(
-        0.47 * effective_auth + 0.33 * identity_signal + 0.20 * behavior_conf,
+        TRUST_WEIGHT_VIDEO * effective_auth + TRUST_WEIGHT_IDENTITY * identity_signal + TRUST_WEIGHT_BEHAVIOR * behavior_conf,
         4,
     )
     trust_score = max(0.0, min(1.0, trust_score))
@@ -330,7 +336,7 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: str = None) -> D
     temporal = _temporal_analyzer.record_frame(session_id, temporal_input)
 
     # Use smoothed trust score once we have 3+ frames of history
-    if temporal["frameCount"] >= 3:
+    if temporal["frameCount"] >= TEMPORAL_SMOOTHING_MIN_FRAMES:
         trust_score = temporal["smoothedTrustScore"]
 
     processed_at = _utcnow_iso()

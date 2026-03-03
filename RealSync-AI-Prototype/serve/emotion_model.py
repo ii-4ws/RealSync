@@ -92,18 +92,19 @@ def get_emotion_model():
             if os.path.isfile(EMOTION_WEIGHTS_PATH):
                 try:
                     checkpoint = torch.load(EMOTION_WEIGHTS_PATH, map_location="cpu", weights_only=True)
-                except (RuntimeError, TypeError):
+                except Exception:
                     # Checkpoint contains numpy metadata from training; safe (our own weights)
                     print("[emotion] weights_only=True failed, falling back to weights_only=False (local weights)")
                     checkpoint = torch.load(EMOTION_WEIGHTS_PATH, map_location="cpu", weights_only=False)
                 state_dict = checkpoint.get("model_state_dict", checkpoint)
                 net.load_state_dict(state_dict)
                 print(f"[emotion] Loaded weights from {EMOTION_WEIGHTS_PATH}")
+                net.eval()
+                _model = net
+                print("[emotion] MobileNetV2 emotion model ready")
             else:
-                print(f"[emotion] WARNING: weights not found at {EMOTION_WEIGHTS_PATH}, using random init")
-            net.eval()
-            _model = net
-            print("[emotion] MobileNetV2 emotion model ready")
+                _model = None
+                print(f"[emotion] DISABLED: weights not found at {EMOTION_WEIGHTS_PATH}")
         except Exception as e:
             print(f"[emotion] Failed to load emotion model: {e}")
     return _model

@@ -13,6 +13,7 @@ import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
 import { authFetch } from '../../lib/api';
+import { useWebSocket } from '../../contexts/WebSocketContext';
 
 type MeetingType = 'official' | 'business' | 'friends';
 
@@ -32,6 +33,10 @@ interface SessionsScreenProps {
   userName?: string;
   userEmail?: string;
   onStartSession?: (sessionId: string, title: string, meetingType: MeetingType) => void;
+  activeSessionId?: string | null;
+  onNewSession?: () => void;
+  onEndSession?: () => void;
+  openNewSessionFlag?: number;
 }
 
 /** Validate that a string looks like a Zoom meeting URL */
@@ -64,8 +69,47 @@ function getCountdown(targetIso: string): string {
   return `${remainMins}m`;
 }
 
-export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, userEmail, onStartSession }: SessionsScreenProps) {
+interface HistorySession {
+  id: string;
+  title: string;
+  createdAt: string;
+  endedAt: string | null;
+  meetingType: string;
+  status: string;
+}
+
+const SCHEDULED_STORAGE_KEY = 'realsync_scheduled';
+
+function saveScheduled(sessions: ScheduledSession[]): void {
+  try {
+    localStorage.setItem(SCHEDULED_STORAGE_KEY, JSON.stringify(sessions));
+  } catch { /* quota exceeded — ignore */ }
+}
+
+function loadScheduled(): ScheduledSession[] {
+  try {
+    const raw = localStorage.getItem(SCHEDULED_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as ScheduledSession[];
+    // Filter out expired entries (scheduledAt in the past) and already-joining/joined
+    return parsed.filter(
+      (s) => s.status === 'waiting' && new Date(s.scheduledAt).getTime() > Date.now(),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, userEmail, onStartSession, activeSessionId, onEndSession, openNewSessionFlag }: SessionsScreenProps) {
+  const { isConnected: wsConnected } = useWebSocket();
   const [isNewSessionOpen, setIsNewSessionOpen] = useState(false);
+
+  // Open new session dialog when triggered from TopBar on another page
+  useEffect(() => {
+    if (openNewSessionFlag && openNewSessionFlag > 0) {
+      setIsNewSessionOpen(true);
+    }
+  }, [openNewSessionFlag]);
   const [meetingName, setMeetingName] = useState('');
   const [meetingType, setMeetingType] = useState<MeetingType>('business');
   const [meetingUrl, setMeetingUrl] = useState('');
@@ -73,9 +117,14 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
   const [creating, setCreating] = useState(false);
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
 
-  // Scheduled sessions waiting to auto-join
-  const [scheduledSessions, setScheduledSessions] = useState<ScheduledSession[]>([]);
+  // Scheduled sessions waiting to auto-join — restored from localStorage
+  const [scheduledSessions, setScheduledSessions] = useState<ScheduledSession[]>(() => loadScheduled());
   const scheduledTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Persist scheduled sessions to localStorage on every change
+  useEffect(() => {
+    saveScheduled(scheduledSessions.filter((s) => s.status === 'waiting'));
+  }, [scheduledSessions]);
 
   // Countdown ticker -- re-render every 30s to update countdowns
   const [, setTick] = useState(0);
@@ -131,6 +180,16 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
     [joinMeeting],
   );
 
+  // Re-arm timers for sessions restored from localStorage on mount
+  useEffect(() => {
+    scheduledSessions.forEach((entry) => {
+      if (entry.status === 'waiting' && !scheduledTimersRef.current.has(entry.sessionId)) {
+        scheduleAutoJoin(entry);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount
+
   // Clean up timers on unmount
   useEffect(() => {
     return () => {
@@ -144,8 +203,12 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
       return;
     }
 
-    // Validate Zoom URL if provided
-    if (meetingUrl.trim() && !isValidZoomUrl(meetingUrl.trim())) {
+    // Zoom URL is required
+    if (!meetingUrl.trim()) {
+      toast.error('Please enter a Zoom meeting URL');
+      return;
+    }
+    if (!isValidZoomUrl(meetingUrl.trim())) {
       toast.error('Please enter a valid Zoom meeting URL (e.g. https://us05web.zoom.us/j/...)');
       return;
     }
@@ -181,11 +244,8 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
 
       const data = (await response.json()) as { sessionId: string };
 
-      // Determine flow based on URL + scheduled time
-      const hasUrl = !!meetingUrl.trim();
-      const hasSchedule = !!scheduledAt;
-
-      if (hasUrl && hasSchedule) {
+      // Determine flow: scheduled or immediate join
+      if (scheduledAt) {
         // Scheduled meeting -- add to scheduled list, auto-join at time
         const entry: ScheduledSession = {
           sessionId: data.sessionId,
@@ -198,14 +258,10 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
         setScheduledSessions((prev) => [...prev, entry]);
         scheduleAutoJoin(entry);
         toast.success(`Session scheduled -- bot will join at ${new Date(scheduledAt).toLocaleTimeString()}`);
-      } else if (hasUrl) {
+      } else {
         // Immediate join -- create + join + navigate to dashboard
         toast.success('Session created -- joining meeting...');
         await joinMeeting(data.sessionId, meetingUrl.trim(), meetingName.trim(), meetingType);
-      } else {
-        // No URL -- just create session and go to dashboard (local mic mode)
-        toast.success('Session started');
-        onStartSession?.(data.sessionId, meetingName.trim(), meetingType);
       }
 
       // Reset form
@@ -247,15 +303,6 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
   };
 
   // -- Real session history from API --
-  interface HistorySession {
-    id: string;
-    title: string;
-    createdAt: string;
-    endedAt: string | null;
-    meetingType: string;
-    status: string;
-  }
-
   const [historySessions, setHistorySessions] = useState<HistorySession[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
@@ -318,7 +365,7 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
       <Sidebar currentScreen="sessions" onNavigate={onNavigate} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar title="Live Meetings / Sessions" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />
+        <TopBar title="Live Meetings / Sessions" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} isConnected={wsConnected} activeSessionId={activeSessionId} onNewSession={() => setIsNewSessionOpen(true)} onEndSession={onEndSession} />
         
         <div className="flex-1 overflow-y-auto p-8">
           {/* Stats */}
@@ -432,20 +479,20 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
                                 <DropdownMenuTrigger className="text-gray-400 hover:text-white">
                                   <MoreVertical className="w-5 h-5" />
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent className="bg-[#1a1a2e] border border-gray-800">
+                                <DropdownMenuContent className="bg-[#1a1a2e] border border-gray-800 p-1">
                                   <DropdownMenuItem
-                                    className="text-gray-400 hover:bg-gray-800"
+                                    className="text-gray-400 hover:bg-gray-800 px-3 py-2 cursor-pointer"
                                     onClick={() => onNavigate('reports')}
                                   >
                                     <Eye className="w-4 h-4 mr-2" />
                                     View Report
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem className="text-gray-400 hover:bg-gray-800">
+                                  <DropdownMenuItem className="text-gray-400 hover:bg-gray-800 px-3 py-2 cursor-pointer">
                                     <Download className="w-4 h-4 mr-2" />
                                     Download
                                   </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem className="text-gray-400 hover:bg-gray-800">
+                                  <DropdownMenuSeparator className="bg-gray-800" />
+                                  <DropdownMenuItem className="text-gray-400 hover:bg-gray-800 px-3 py-2 cursor-pointer">
                                     <Archive className="w-4 h-4 mr-2" />
                                     Archive
                                   </DropdownMenuItem>
@@ -563,7 +610,7 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
               <DialogTitle className="text-white text-xl">Create New Session</DialogTitle>
               <DialogDescription className="text-gray-400 text-sm">
                 Start a live session to stream transcript + trust signals in real time.
-                Optionally provide a Zoom URL to have the bot join automatically.
+                Provide a Zoom URL for the bot to join automatically.
               </DialogDescription>
             </DialogHeader>
 
@@ -597,8 +644,7 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
               <div className="space-y-2">
                 <Label className="text-gray-400 text-sm flex items-center gap-2">
                   <Video className="w-4 h-4 text-cyan-400" />
-                  Zoom Meeting URL
-                  <span className="text-gray-600 text-xs">(optional)</span>
+                  Zoom Meeting URL *
                 </Label>
                 <Input
                   type="url"
@@ -638,12 +684,12 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
                   ? scheduledAt
                     ? 'Bot will auto-join at scheduled time'
                     : 'Bot will join immediately on create'
-                  : 'Use your local mic for captions'}
+                  : 'Enter a valid Zoom URL to continue'}
               </p>
               <Button
                 className="bg-cyan-400 hover:bg-cyan-500 text-black"
                 onClick={handleCreateSession}
-                disabled={creating}
+                disabled={creating || !meetingUrl.trim() || !isValidZoomUrl(meetingUrl.trim())}
               >
                 {creating ? (
                   <>

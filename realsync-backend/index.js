@@ -19,6 +19,7 @@ const botManager = require("./bot/botManager");
 const { authenticate, authenticateWsToken, requireSessionOwner } = require("./lib/auth");
 const { getRecommendation } = require("./lib/recommendations");
 const log = require("./lib/logger");
+const { EMOTIONS } = require("./lib/constants");
 
 /* ------------------------------------------------------------------ */
 /*  Stale bot cleanup on startup (Bug #10)                             */
@@ -82,7 +83,11 @@ app.use(authenticate);
 
 const PORT = process.env.PORT || 4000;
 
-const EMOTIONS = ["Happy", "Neutral", "Angry", "Fear", "Surprise", "Sad"];
+const BEHAVIORAL_ANALYSIS_INTERVAL_MS = 15_000;
+const MAX_AUDIO_BUFFER_CHUNKS = 128;
+const AUDIO_ANALYSIS_INTERVAL_MS = 4_000;
+const AUDIO_DEEPFAKE_ENABLED = process.env.AUDIO_DEEPFAKE_ENABLED === "true";
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const toFixedNumber = (value, digits = 4) =>
   Number.parseFloat(value.toFixed(digits));
@@ -413,6 +418,20 @@ wssSubscribe.on("connection", async (socket, req) => {
       socket.send(JSON.stringify({ type: "participants", sessionId: session.id, participants: participantList, ts: makeIso() }));
     }
 
+    // C3: Respond to client-side ping keepalive messages
+    socket.on("message", (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === "ping") {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "pong" }));
+          }
+        }
+      } catch {
+        // ignore non-JSON or malformed messages
+      }
+    });
+
     socket.on("close", () => {
       session.subscribers.delete(socket);
     });
@@ -517,10 +536,9 @@ const handleTranscript = (session, transcript) => {
   }
 
   // Behavioral text analysis (DeBERTa) — throttled to every 15 seconds
-  const BEHAVIORAL_INTERVAL_MS = 15000;
   if (
     isFinal &&
-    Date.now() - (session.lastBehavioralAnalysisAt || 0) >= BEHAVIORAL_INTERVAL_MS
+    Date.now() - (session.lastBehavioralAnalysisAt || 0) >= BEHAVIORAL_ANALYSIS_INTERVAL_MS
   ) {
     session.lastBehavioralAnalysisAt = Date.now();
     // Collect 60-second text window from recent transcript lines
@@ -628,7 +646,7 @@ wssIngest.on("connection", async (socket, req) => {
     }
 
     if (message.type === "audio_pcm") {
-      if (Number(message.sampleRate) !== 16000 || Number(message.channels) !== 1) {
+      if (message.sampleRate !== 16000 || message.channels !== 1) {
         return;
       }
 
@@ -649,11 +667,10 @@ wssIngest.on("connection", async (socket, req) => {
 
       // Accumulate audio for AI deepfake analysis (H3: cap buffer at 128 chunks)
       session.audioAnalysisBuffer.push(dataB64);
-      const MAX_AUDIO_BUFFER = 128;
-      if (session.audioAnalysisBuffer.length > MAX_AUDIO_BUFFER) session.audioAnalysisBuffer.shift();
-      const AUDIO_ANALYSIS_INTERVAL_MS = 4000; // 4 seconds
+      if (session.audioAnalysisBuffer.length > MAX_AUDIO_BUFFER_CHUNKS) session.audioAnalysisBuffer.shift();
       const now = Date.now();
       if (
+        AUDIO_DEEPFAKE_ENABLED &&
         !session.audioAnalysisInFlight &&
         session.audioAnalysisBuffer.length >= 8 &&
         now - session.lastAudioAnalysisAt >= AUDIO_ANALYSIS_INTERVAL_MS
@@ -672,6 +689,17 @@ wssIngest.on("connection", async (socket, req) => {
                 session.metrics.confidenceLayers = session.metrics.confidenceLayers || {};
                 session.metrics.confidenceLayers.audio = res.audio.authenticityScore;
               }
+              // Fix 2: Recompute trust and broadcast so frontend sees audio updates
+              if (session.metrics?.trustScore != null) {
+                const behaviorConf = session.metrics.confidenceLayers?.behavior || 0.55;
+                const identityShift = session.metrics.confidenceLayers?.identityShift || 0;
+                const identitySignal = 1.0 - identityShift;
+                const videoSignal = session.metrics.confidenceLayers?.video ?? 0.5;
+                const audioScore = res.audio.authenticityScore;
+                const finalTrust = 0.35 * videoSignal + 0.25 * audioScore + 0.25 * identitySignal + 0.15 * behaviorConf;
+                session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));
+              }
+              broadcastToSession(session.id, { type: "metrics", data: session.metrics });
             }
           })
           .catch((err) => {
@@ -843,7 +871,7 @@ async function handleFrame(session, message) {
       const identitySignal = 1.0 - identityShift;
 
       let finalTrust;
-      if (audioScore != null) {
+      if (AUDIO_DEEPFAKE_ENABLED && audioScore != null) {
         // 4-signal weighted: video=0.35, audio=0.25, identity=0.25, behavior=0.15
         const videoSignal = result.aggregated.deepfake?.authenticityScore ?? 0.5;
         finalTrust = 0.35 * videoSignal + 0.25 * audioScore + 0.25 * identitySignal + 0.15 * behaviorConf;
@@ -1150,11 +1178,10 @@ function processIngestMessage(session, message) {
 
       // Accumulate audio for AI deepfake analysis (mirrors WS ingest handler)
       session.audioAnalysisBuffer.push(dataB64);
-      const MAX_AUDIO_BUFFER = 128;
-      if (session.audioAnalysisBuffer.length > MAX_AUDIO_BUFFER) session.audioAnalysisBuffer.shift();
-      const AUDIO_ANALYSIS_INTERVAL_MS = 4000;
+      if (session.audioAnalysisBuffer.length > MAX_AUDIO_BUFFER_CHUNKS) session.audioAnalysisBuffer.shift();
       const now = Date.now();
       if (
+        AUDIO_DEEPFAKE_ENABLED &&
         !session.audioAnalysisInFlight &&
         session.audioAnalysisBuffer.length >= 8 &&
         now - session.lastAudioAnalysisAt >= AUDIO_ANALYSIS_INTERVAL_MS
@@ -1173,6 +1200,17 @@ function processIngestMessage(session, message) {
                 session.metrics.confidenceLayers = session.metrics.confidenceLayers || {};
                 session.metrics.confidenceLayers.audio = res.audio.authenticityScore;
               }
+              // Recompute trust and broadcast for audio-via-REST path
+              if (session.metrics?.trustScore != null) {
+                const behaviorConf = session.metrics.confidenceLayers?.behavior || 0.55;
+                const identityShift = session.metrics.confidenceLayers?.identityShift || 0;
+                const identitySignal = 1.0 - identityShift;
+                const videoSignal = session.metrics.confidenceLayers?.video ?? 0.5;
+                const audioScore = res.audio.authenticityScore;
+                const finalTrust = 0.35 * videoSignal + 0.25 * audioScore + 0.25 * identitySignal + 0.15 * behaviorConf;
+                session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));
+              }
+              broadcastToSession(session.id, { type: "metrics", data: session.metrics });
             }
           })
           .catch((err) => {
@@ -1201,7 +1239,7 @@ app.post("/api/sessions/:id/join", requireSessionOwner(getSession, rehydrateSess
   // H4: Validate URL — only allow https://*.zoom.us
   try {
     const u = new URL(meetingUrl);
-    if (u.protocol !== "https:" || !u.hostname.endsWith(".zoom.us")) throw 0;
+    if (u.protocol !== "https:" || !u.hostname.endsWith(".zoom.us")) throw new Error("Not a Zoom URL");
   } catch {
     return res.status(400).json({ error: "meetingUrl must be https://*.zoom.us" });
   }
@@ -1327,8 +1365,8 @@ app.get("/api/notifications", async (req, res) => {
     return res.status(401).json({ error: "Authentication required" });
   }
 
-  const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), 100);
-  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
   const result = await persistence.getUserNotifications(req.userId, { limit, offset });
   return res.json(result);
@@ -1373,6 +1411,34 @@ app.post("/api/notifications/read", async (req, res) => {
 
   const result = await persistence.markNotificationsRead(req.userId, alertIds);
   return res.json({ ok: result.ok });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Detection settings                                                 */
+/* ------------------------------------------------------------------ */
+
+app.get("/api/settings", async (req, res) => {
+  if (!req.userId) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  const settings = await persistence.getDetectionSettings(req.userId);
+  return res.json(settings);
+});
+
+app.patch("/api/settings", async (req, res) => {
+  if (!req.userId) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  const body = req.body;
+  if (!body || typeof body !== "object") {
+    return res.status(400).json({ error: "Request body must be a JSON object" });
+  }
+  const result = await persistence.updateDetectionSettings(req.userId, body);
+  if (!result.ok) {
+    return res.status(500).json({ error: result.error || "Failed to save settings" });
+  }
+  const updated = await persistence.getDetectionSettings(req.userId);
+  return res.json(updated);
 });
 
 app.get("/api/metrics", (req, res) => {
@@ -1438,6 +1504,33 @@ app.use((err, req, res, _next) => {
 server.listen(PORT, () => {
   log.info("server", `Backend listening on port ${PORT}`);
 });
+
+/* ------------------------------------------------------------------ */
+/*  WebSocket keepalive — ping/pong heartbeat (C3)                     */
+/* ------------------------------------------------------------------ */
+
+const WS_PING_INTERVAL_MS = 30_000; // 30 seconds
+
+function setupWsPingPong(wss, label) {
+  wss.on("connection", (ws) => {
+    ws.isAlive = true;
+    ws.on("pong", () => { ws.isAlive = true; });
+  });
+
+  setInterval(() => {
+    wss.clients.forEach((ws) => {
+      if (!ws.isAlive) {
+        log.debug("ws-keepalive", `Terminating dead ${label} connection`);
+        return ws.terminate();
+      }
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, WS_PING_INTERVAL_MS);
+}
+
+setupWsPingPong(wssSubscribe, "subscribe");
+setupWsPingPong(wssIngest, "ingest");
 
 /* ------------------------------------------------------------------ */
 /*  Session garbage collection                                         */

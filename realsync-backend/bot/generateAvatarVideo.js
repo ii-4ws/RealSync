@@ -25,14 +25,15 @@ const BAYMAX_PATH = path.join(__dirname, "baymax-base.png");
 const LOGO_PATH = path.join(__dirname, "../../Front-End/src/assets/realsync-logo-light.png");
 
 async function generateAvatarVideo() {
-  // Ensure we have the base image — copy from Downloads if needed
+  // Ensure we have the base image
   if (!fs.existsSync(BAYMAX_PATH)) {
-    const downloadPath = "/Users/ahmed/Downloads/Gemini_Generated_Image_5u2fib5u2fib5u2f.png";
-    if (fs.existsSync(downloadPath)) {
-      fs.copyFileSync(downloadPath, BAYMAX_PATH);
+    const fallbackPath = process.env.AVATAR_BASE_IMAGE_PATH || "";
+    if (fallbackPath && fs.existsSync(fallbackPath)) {
+      fs.copyFileSync(fallbackPath, BAYMAX_PATH);
       console.log("Copied Baymax base image to bot directory.");
     } else {
-      console.error("Baymax base image not found. Place it at", BAYMAX_PATH);
+      console.error("Baymax base image not found. Place it at", BAYMAX_PATH,
+        "or set AVATAR_BASE_IMAGE_PATH env var.");
       process.exit(1);
     }
   }

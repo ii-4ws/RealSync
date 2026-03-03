@@ -7,6 +7,7 @@
  */
 
 const { v4: uuidv4 } = require("uuid");
+const log = require("./logger");
 
 /* ------------------------------------------------------------------ */
 /*  Thresholds (see FINAL_RELEASE_TECH_SPEC.md §12)                    */
@@ -28,6 +29,7 @@ const THRESHOLDS = {
 };
 
 const DEFAULT_COOLDOWN_MS = 30_000; // 30 seconds between same alert type
+const EVICT_AFTER_MS = 5 * 60 * 1000; // 5 minutes
 
 /* ------------------------------------------------------------------ */
 /*  Alert builder                                                      */
@@ -68,7 +70,7 @@ class AlertFusionEngine {
 
     // Evict stale entries when the map grows too large
     if (this.cooldowns.size > 200) {
-      const expiryThreshold = cooldownMs * 3;
+      const expiryThreshold = EVICT_AFTER_MS;
       for (const [k, ts] of this.cooldowns) {
         if (now - ts > expiryThreshold) {
           this.cooldowns.delete(k);
@@ -265,7 +267,16 @@ class AlertFusionEngine {
     if (!Array.isArray(anomalies) || anomalies.length === 0) return alerts;
 
     for (const anomaly of anomalies) {
-      const type = anomaly.type || anomaly;
+      if (typeof anomaly !== "object" || !anomaly.type) {
+        log.warn("alertFusion", `Skipping malformed temporal anomaly: ${JSON.stringify(anomaly)}`);
+        continue;
+      }
+      const type = anomaly.type;
+
+      const KNOWN_TYPES = ["sudden_trust_drop", "identity_switch", "emotion_instability"];
+      if (!KNOWN_TYPES.includes(type)) {
+        log.debug("alertFusion", `Unknown temporal anomaly type: "${type}"`);
+      }
 
       if (type === "sudden_trust_drop" && this._checkCooldown("temporal_trust_drop")) {
         alerts.push(

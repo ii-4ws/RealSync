@@ -94,11 +94,15 @@ export function NotificationBell() {
       <PopoverTrigger asChild>
         <button
           className="relative p-2 rounded-lg bg-[#2a2a3e] hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-400"
+          style={{ overflow: 'visible' }}
           aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
         >
           <Bell className="w-5 h-5 text-gray-300" />
           {unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full px-1">
+            <span
+              className="min-w-[18px] h-[18px] flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full px-1 pointer-events-none"
+              style={{ position: 'absolute', top: '-4px', right: '-4px' }}
+            >
               {unreadCount > 99 ? '99+' : unreadCount}
             </span>
           )}
@@ -123,8 +127,8 @@ export function NotificationBell() {
         </div>
 
         {/* Category filter pills */}
-        <div className="px-3 py-2 border-b border-gray-800 overflow-x-auto">
-          <div className="flex gap-1.5 min-w-max">
+        <div className="px-3 py-2 border-b border-gray-800 overflow-x-auto scrollbar-hide">
+          <div className="flex gap-1.5 flex-wrap">
             {CATEGORY_FILTERS.map((filter) => {
               const isActive = activeFilter === filter.key;
               const badge = filter.key === 'all' ? unreadCount : (categoryUnreadCounts[filter.key] || 0);

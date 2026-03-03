@@ -12,9 +12,17 @@ All code changes done. See `tasks/ai-pipeline-upgrade-plan.md` for full plan.
 `lib/aiClient.js`, `lib/alertFusion.js`, `lib/fraudDetector.js`, `index.js`, `DashboardScreen.tsx`, `ai-inference.schema.json`
 
 **Still needed (not code):**
-- [ ] Train/download `efficientnet_b4_deepfake.pth` weights
-- [ ] Download `aasist_weights.pth` from clovaai/aasist
+- [x] Train/download `efficientnet_b4_deepfake.pth` weights (done — SBI conversion)
+- [x] Download `aasist_weights.pth` (done — trained on ASVspoof 2019 LA, 54.8% acc)
+- [x] DeBERTa text model download script (`scripts/download_models.sh`) + cached
+- [x] All 6 models confirmed loaded via health check (2026-03-01)
+- [x] SBI label convention verified (label=0 real, label=1 fake, inversion correct)
+- [x] AI_SERVICE_REPORT.md written with full accuracy figures
+- [x] Fine-tune deepfake classifier — **92.33% val accuracy** at epoch 14 via `training/finetune_deepfake_labeled.py`
+- [ ] Re-train audio model — hyperparams updated (lr=1e-4, batch=32, epochs=50, warmup+cosine), run `training/train_audio_sincconv.py`
 - [ ] End-to-end testing with live Zoom session
+- [ ] Run Supabase migration: `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS detection_settings JSONB DEFAULT '{"facialAnalysis": true, "voicePattern": true, "emotionDetection": true}'::jsonb;`
+- [ ] Create Supabase Storage bucket for avatars (SQL in plan doc)
 
 ## Bugs — ALL RESOLVED
 
@@ -40,6 +48,12 @@ All code changes done. See `tasks/ai-pipeline-upgrade-plan.md` for full plan.
 
 - [x] **MesoNet-4 false positives on Zoom video** (#13)
   Replaced with EfficientNet-B4+SBI.
+
+## Documentation — COMPLETED
+
+- [x] `docs/CODEMAP.md` — Complete codebase map (architecture, file-level detail, all 3 services)
+- [x] `docs/DEVELOPMENT_LOG.md` — Development history, timeline, decisions, lessons
+- [ ] Remove `Co-Authored-By: Claude` from commit `17bcade` (git rebase)
 
 ## Planned Features — ALL IMPLEMENTED
 

@@ -22,6 +22,7 @@
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const path = require("path");
+const log = require("../lib/logger");
 
 const DEFAULT_DISPLAY_NAME = "RealSync Bot";
 const JOIN_TIMEOUT_MS = 60_000; // 60s to get into the meeting
@@ -91,7 +92,7 @@ class ZoomBotAdapter {
       const filename = `${String(this._screenshotIndex).padStart(2, "0")}_${label}.png`;
       const filepath = path.join(SCREENSHOTS_DIR, filename);
       await this.page.screenshot({ path: filepath, fullPage: true });
-      console.log(`[ZoomBot][debug] Screenshot: ${filename}`);
+      log.info("zoomBot", `Debug screenshot: ${filename}`);
     } catch {
       // Non-critical
     }
@@ -185,7 +186,7 @@ class ZoomBotAdapter {
       if (meetingParsed.protocol !== 'https:' || !meetingParsed.hostname.endsWith('.zoom.us')) {
         throw new Error(`[ZoomBot] Refused to navigate — not a Zoom URL: ${this.meetingUrl}`);
       }
-      console.log(`[ZoomBot] Navigating to: ${this.meetingUrl}`);
+      log.info("zoomBot", `Navigating to: ${this.meetingUrl}`);
       await this.page.goto(this.meetingUrl, {
         waitUntil: "networkidle2",
         timeout: JOIN_TIMEOUT_MS,
@@ -221,9 +222,9 @@ class ZoomBotAdapter {
       this._startParticipantScraping();
       await this._startAudioCapture();
 
-      console.log("[ZoomBot] Successfully joined meeting and started capture (video + audio + captions).");
+      log.info("zoomBot", "Successfully joined meeting and started capture (video + audio + captions).");
     } catch (err) {
-      console.error(`[ZoomBot] Failed to join meeting: ${err.message}`);
+      log.error("zoomBot", `Failed to join meeting: ${err.message}`);
       await this._debugScreenshot("error_state");
 
       this.onIngestMessage({
@@ -271,17 +272,17 @@ class ZoomBotAdapter {
 
     if (meetingIdMatch) {
       const meetingId = meetingIdMatch[1];
-      const directUrl = `https://app.zoom.us/wc/${meetingId}/join${pwdMatch ? "?pwd=" + pwdMatch[1] : ""}`;
+      const directUrl = `https://app.zoom.us/wc/${meetingId}/join${pwdMatch ? "?pwd=" + encodeURIComponent(pwdMatch[1]) : ""}`;
       // Validate constructed URL to prevent SSRF
       const parsedUrl = new URL(directUrl);
       if (parsedUrl.protocol !== 'https:' || parsedUrl.hostname !== 'app.zoom.us') {
         throw new Error(`[ZoomBot] Refused to navigate — URL does not point to app.zoom.us: ${directUrl}`);
       }
-      console.log(`[ZoomBot] Navigating directly to web client: ${directUrl}`);
+      log.info("zoomBot", `Navigating directly to web client: ${directUrl}`);
       await page.goto(directUrl, { waitUntil: "networkidle2", timeout: 30000 });
     } else {
       // Fallback: try the landing page flow
-      console.log("[ZoomBot] Could not extract meeting ID — trying landing page flow...");
+      log.info("zoomBot", "Could not extract meeting ID — trying landing page flow...");
       await sleep(3000);
       await this._dismissCookieBanner();
       await this._clickJoinFromBrowser();
@@ -296,12 +297,12 @@ class ZoomBotAdapter {
     await this._debugScreenshot("02_web_client_loaded");
 
     // Wait for the React SPA to fully mount the join form
-    console.log("[ZoomBot] Waiting for join form to render...");
+    log.info("zoomBot", "Waiting for join form to render...");
     await sleep(5000);
     await this._debugScreenshot("03_join_form");
 
     const currentUrl = page.url();
-    console.log(`[ZoomBot] Current URL: ${currentUrl}`);
+    log.info("zoomBot", `Current URL: ${currentUrl}`);
 
     // Accept cookies on app.zoom.us (if banner appears here too)
     await this._dismissCookieBanner();
@@ -325,12 +326,12 @@ class ZoomBotAdapter {
     try {
       await this._debugScreenshot("05_after_join_click");
     } catch (e) {
-      console.log("[ZoomBot] Frame detached after join click (expected during navigation).");
+      log.info("zoomBot", "Frame detached after join click (expected during navigation).");
     }
 
     // ─── Phase 3: Wait for meeting view ──────────────────────────────
 
-    console.log("[ZoomBot] Waiting for meeting view...");
+    log.info("zoomBot", "Waiting for meeting view...");
     // Wait for navigation to settle — Zoom transitions between pages
     try {
       await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
@@ -342,7 +343,7 @@ class ZoomBotAdapter {
     try {
       await this._debugScreenshot("06_meeting_view");
     } catch (e) {
-      console.log("[ZoomBot] Screenshot failed after join — retrying after wait...");
+      log.info("zoomBot", "Screenshot failed after join — retrying after wait...");
       await sleep(3000);
       try { await this._debugScreenshot("06_meeting_view"); } catch {}
     }
@@ -356,17 +357,17 @@ class ZoomBotAdapter {
         return bodyText.includes("Enter Meeting Info") || bodyText.includes("Your Name");
       });
     } catch {
-      console.log("[ZoomBot] Could not check join page state (frame may have changed).");
+      log.info("zoomBot", "Could not check join page state (frame may have changed).");
     }
 
     if (isStillOnJoinPage) {
-      console.warn("[ZoomBot] Still on pre-join page — attempting to click Join again...");
+      log.warn("zoomBot", "Still on pre-join page — attempting to click Join again...");
       try {
         await this._clickJoinButton();
         await sleep(5000);
         await this._debugScreenshot("06b_retry_join");
       } catch (e) {
-        console.log("[ZoomBot] Retry join click triggered navigation — continuing...");
+        log.info("zoomBot", "Retry join click triggered navigation — continuing...");
         await sleep(5000);
       }
     }
@@ -388,26 +389,26 @@ class ZoomBotAdapter {
         ].join(", "),
         { timeout: JOIN_TIMEOUT_MS }
       );
-      console.log("[ZoomBot] Meeting view detected — we're in!");
+      log.info("zoomBot", "Meeting view detected — we're in!");
     } catch {
       // Check if we're still on a join page or if we're actually in
       let bodyText = "";
       try {
         bodyText = await page.evaluate(() => document.body.innerText.slice(0, 500));
       } catch {
-        console.log("[ZoomBot] Could not read page text — frame may still be transitioning.");
+        log.info("zoomBot", "Could not read page text — frame may still be transitioning.");
         await sleep(5000);
         try {
           bodyText = await page.evaluate(() => document.body.innerText.slice(0, 500));
         } catch {
-          console.log("[ZoomBot] Still cannot read page — continuing anyway.");
+          log.info("zoomBot", "Still cannot read page — continuing anyway.");
         }
       }
-      console.warn(`[ZoomBot] Could not detect meeting view. Page text: ${bodyText.slice(0, 200)}`);
+      log.warn("zoomBot", `Could not detect meeting view. Page text: ${bodyText.slice(0, 200)}`);
 
       // Check if we might be in a waiting room
       if (bodyText.includes("waiting") || bodyText.includes("host")) {
-        console.log("[ZoomBot] Looks like we're in a waiting room — waiting for host to admit...");
+        log.info("zoomBot", "Looks like we're in a waiting room — waiting for host to admit...");
         // Wait up to 2 more minutes for host to admit (cancellable by leave())
         await this._interruptibleSleep(120000);
       }
@@ -420,7 +421,7 @@ class ZoomBotAdapter {
    */
   async _dismissCookieBanner() {
     const page = this.page;
-    console.log("[ZoomBot] Looking for cookie consent banner...");
+    log.info("zoomBot", "Looking for cookie consent banner...");
 
     try {
       // Try OneTrust "Accept All Cookies" button (Zoom uses OneTrust)
@@ -444,7 +445,7 @@ class ZoomBotAdapter {
 
             if (isVisible) {
               await btn.click();
-              console.log(`[ZoomBot] Clicked cookie consent button: ${sel}`);
+              log.info("zoomBot", `Clicked cookie consent button: ${sel}`);
               await sleep(1000);
               return;
             }
@@ -471,13 +472,13 @@ class ZoomBotAdapter {
       });
 
       if (clicked) {
-        console.log(`[ZoomBot] Dismissed cookie banner via text match: "${clicked}"`);
+        log.info("zoomBot", `Dismissed cookie banner via text match: "${clicked}"`);
         await sleep(1000);
       } else {
-        console.log("[ZoomBot] No cookie banner found (or already dismissed).");
+        log.info("zoomBot", "No cookie banner found (or already dismissed).");
       }
     } catch (err) {
-      console.log(`[ZoomBot] Cookie banner handling: ${err.message}`);
+      log.info("zoomBot", `Cookie banner handling: ${err.message}`);
     }
   }
 
@@ -487,7 +488,7 @@ class ZoomBotAdapter {
    */
   async _clickJoinFromBrowser() {
     const page = this.page;
-    console.log('[ZoomBot] Looking for "Join from Your Browser" button...');
+    log.info("zoomBot", 'Looking for "Join from Your Browser" button...');
 
     // Strategy 1: Find button by text content (most reliable)
     const clicked = await page.evaluate(() => {
@@ -507,7 +508,7 @@ class ZoomBotAdapter {
     });
 
     if (clicked) {
-      console.log(`[ZoomBot] Clicked: "${clicked}"`);
+      log.info("zoomBot", `Clicked: "${clicked}"`);
       await sleep(2000);
       return;
     }
@@ -525,7 +526,7 @@ class ZoomBotAdapter {
         const el = await page.$(sel);
         if (el) {
           const text = await page.evaluate((e) => e.textContent?.trim(), el);
-          console.log(`[ZoomBot] Found element with selector "${sel}" ("${text}") — clicking...`);
+          log.info("zoomBot", `Found element with selector "${sel}" ("${text}") — clicking...`);
           await el.click();
           await sleep(2000);
           return;
@@ -536,7 +537,7 @@ class ZoomBotAdapter {
     }
 
     // Strategy 3: Wait for the button to appear (it may load after a delay)
-    console.log("[ZoomBot] Button not found yet — waiting for it to appear...");
+    log.info("zoomBot", "Button not found yet — waiting for it to appear...");
     await sleep(5000);
     await this._debugScreenshot("02b_waiting_for_join_button");
 
@@ -557,13 +558,13 @@ class ZoomBotAdapter {
     });
 
     if (clickedLater) {
-      console.log(`[ZoomBot] Clicked (after wait): "${clickedLater}"`);
+      log.info("zoomBot", `Clicked (after wait): "${clickedLater}"`);
       await sleep(2000);
     } else {
-      console.warn('[ZoomBot] Could not find "Join from browser" button — page may have redirected directly.');
+      log.warn("zoomBot", 'Could not find "Join from browser" button — page may have redirected directly.');
       // Check if we're already on the web client page
       if (page.url().includes("app.zoom.us/wc/")) {
-        console.log("[ZoomBot] Already on web client page — skipping.");
+        log.info("zoomBot", "Already on web client page — skipping.");
       }
     }
   }
@@ -577,12 +578,12 @@ class ZoomBotAdapter {
     while (Date.now() - startTime < timeoutMs) {
       const url = this.page.url();
       if (url.includes(targetSubstring)) {
-        console.log(`[ZoomBot] URL now contains "${targetSubstring}": ${url}`);
+        log.info("zoomBot", `URL now contains "${targetSubstring}": ${url}`);
         return true;
       }
       await sleep(500);
     }
-    console.log(`[ZoomBot] URL did not change to contain "${targetSubstring}" within ${timeoutMs}ms`);
+    log.info("zoomBot", `URL did not change to contain "${targetSubstring}" within ${timeoutMs}ms`);
     return false;
   }
 
@@ -592,7 +593,7 @@ class ZoomBotAdapter {
    */
   async _enterDisplayName() {
     const page = this.page;
-    console.log(`[ZoomBot] Looking for name input to enter "${this.displayName}"...`);
+    log.info("zoomBot", `Looking for name input to enter "${this.displayName}"...`);
 
     // Log all inputs on the page for debugging
     const inputDebug = await page.evaluate(() => {
@@ -607,7 +608,7 @@ class ZoomBotAdapter {
         visible: el.getBoundingClientRect().width > 0,
       }));
     });
-    console.log(`[ZoomBot] Found ${inputDebug.length} inputs:`, JSON.stringify(inputDebug, null, 2));
+    log.info("zoomBot", `Found ${inputDebug.length} inputs: ${JSON.stringify(inputDebug, null, 2)}`);
 
     // Primary selectors for the name input
     const nameSelectors = [
@@ -654,18 +655,18 @@ class ZoomBotAdapter {
 
             // Verify the value was set
             const currentValue = await page.evaluate((el) => el.value, input);
-            console.log(`[ZoomBot] Name input value after setting: "${currentValue}"`);
+            log.info("zoomBot", `Name input value after setting: "${currentValue}"`);
 
             if (!currentValue || currentValue.trim() === "") {
               // Fallback: clear and type directly
-              console.log("[ZoomBot] React setter failed, falling back to direct typing...");
+              log.info("zoomBot", "React setter failed, falling back to direct typing...");
               await input.click({ clickCount: 3 });
               await sleep(100);
               await input.type(this.displayName, { delay: 80 });
               await sleep(300);
             }
 
-            console.log(`[ZoomBot] Entered display name via "${sel}"`);
+            log.info("zoomBot", `Entered display name via "${sel}"`);
             return;
           }
         }
@@ -700,9 +701,9 @@ class ZoomBotAdapter {
     }, this.displayName);
 
     if (found) {
-      console.log(`[ZoomBot] Entered display name via fallback: ${found}`);
+      log.info("zoomBot", `Entered display name via fallback: ${found}`);
     } else {
-      console.warn("[ZoomBot] Could not find name input field.");
+      log.warn("zoomBot", "Could not find name input field.");
     }
   }
 
@@ -712,7 +713,7 @@ class ZoomBotAdapter {
    */
   async _enableVideoPreview() {
     const page = this.page;
-    console.log("[ZoomBot] Looking for video preview button to enable camera...");
+    log.info("zoomBot", "Looking for video preview button to enable camera...");
 
     try {
       // The video button on the preview page has id "preview-video-control-button"
@@ -752,21 +753,21 @@ class ZoomBotAdapter {
       });
 
       if (clicked === "already-on") {
-        console.log("[ZoomBot] Video preview is already enabled.");
+        log.info("zoomBot", "Video preview is already enabled.");
       } else if (clicked) {
-        console.log(`[ZoomBot] Enabled video preview: ${clicked}`);
+        log.info("zoomBot", `Enabled video preview: ${clicked}`);
       } else {
         // Try clicking the video button by coordinates (it may just be an icon)
         const btn = await page.$("#preview-video-control-button");
         if (btn) {
           await btn.click();
-          console.log("[ZoomBot] Clicked video preview button directly.");
+          log.info("zoomBot", "Clicked video preview button directly.");
         } else {
-          console.log("[ZoomBot] Could not find video preview button.");
+          log.info("zoomBot", "Could not find video preview button.");
         }
       }
     } catch (err) {
-      console.log(`[ZoomBot] Video preview toggle: ${err.message}`);
+      log.info("zoomBot", `Video preview toggle: ${err.message}`);
     }
   }
 
@@ -775,7 +776,7 @@ class ZoomBotAdapter {
    */
   async _clickJoinButton() {
     const page = this.page;
-    console.log('[ZoomBot] Looking for "Join" button...');
+    log.info("zoomBot", 'Looking for "Join" button...');
 
     // Log all buttons for debugging
     const btnDebug = await page.evaluate(() => {
@@ -790,10 +791,10 @@ class ZoomBotAdapter {
           rect: b.getBoundingClientRect(),
         }));
     });
-    console.log(`[ZoomBot] Visible buttons:`, JSON.stringify(btnDebug, null, 2));
+    log.info("zoomBot", `Visible buttons: ${JSON.stringify(btnDebug, null, 2)}`);
 
     // Wait for the Join button to become enabled (max 10 seconds)
-    console.log("[ZoomBot] Waiting for Join button to become enabled...");
+    log.info("zoomBot", "Waiting for Join button to become enabled...");
     for (let attempt = 0; attempt < 20; attempt++) {
       const btnState = await page.evaluate(() => {
         const buttons = Array.from(document.querySelectorAll("button"));
@@ -812,9 +813,9 @@ class ZoomBotAdapter {
       });
 
       if (btnState) {
-        console.log(`[ZoomBot] Join button state: disabled=${btnState.isDisabled}, classes="${btnState.classes}"`);
+        log.info("zoomBot", `Join button state: disabled=${btnState.isDisabled}, classes="${btnState.classes}"`);
         if (!btnState.isDisabled) {
-          console.log("[ZoomBot] Join button is enabled!");
+          log.info("zoomBot", "Join button is enabled!");
           break;
         }
       }
@@ -845,7 +846,7 @@ class ZoomBotAdapter {
     });
 
     if (btnCoords) {
-      console.log(`[ZoomBot] Clicking Join button "${btnCoords.text}" at (${btnCoords.x}, ${btnCoords.y}) via mouse...`);
+      log.info("zoomBot", `Clicking Join button "${btnCoords.text}" at (${btnCoords.x}, ${btnCoords.y}) via mouse...`);
 
       // Use page.mouse.click for a real mouse event (better React compatibility)
       await page.mouse.click(btnCoords.x, btnCoords.y);
@@ -861,7 +862,7 @@ class ZoomBotAdapter {
       });
 
       if (stillOnJoin) {
-        console.log("[ZoomBot] Still on join page after mouse click — trying JS dispatch...");
+        log.info("zoomBot", "Still on join page after mouse click — trying JS dispatch...");
         await page.evaluate(() => {
           const buttons = Array.from(document.querySelectorAll("button"));
           for (const btn of buttons) {
@@ -892,7 +893,7 @@ class ZoomBotAdapter {
         await sleep(3000);
       }
     } else {
-      console.warn('[ZoomBot] Could not find "Join" button.');
+      log.warn("zoomBot", 'Could not find "Join" button.');
     }
   }
 
@@ -903,7 +904,7 @@ class ZoomBotAdapter {
    */
   async _dismissZoomPopups() {
     try {
-      console.log("[ZoomBot] Dismissing Zoom popups...");
+      log.info("zoomBot", "Dismissing Zoom popups...");
 
       // Give popups a moment to appear
       await sleep(1500);
@@ -963,7 +964,7 @@ class ZoomBotAdapter {
       });
 
       if (dismissed > 0) {
-        console.log(`[ZoomBot] Dismissed ${dismissed} popup(s)/overlay(s).`);
+        log.info("zoomBot", `Dismissed ${dismissed} popup(s)/overlay(s).`);
         await sleep(500);
 
         // Second pass — some popups appear in sequence
@@ -984,13 +985,13 @@ class ZoomBotAdapter {
           return count;
         });
         if (dismissed2 > 0) {
-          console.log(`[ZoomBot] Dismissed ${dismissed2} more popup(s) on second pass.`);
+          log.info("zoomBot", `Dismissed ${dismissed2} more popup(s) on second pass.`);
         }
       } else {
-        console.log("[ZoomBot] No popups found to dismiss.");
+        log.info("zoomBot", "No popups found to dismiss.");
       }
     } catch (err) {
-      console.warn(`[ZoomBot] Popup dismissal error (non-fatal): ${err.message}`);
+      log.warn("zoomBot", `Popup dismissal error (non-fatal): ${err.message}`);
     }
   }
 
@@ -1015,7 +1016,7 @@ class ZoomBotAdapter {
 
       if (ccButton) {
         await ccButton.click();
-        console.log("[ZoomBot] Enabled closed captions");
+        log.info("zoomBot", "Enabled closed captions");
         await sleep(1000);
         return;
       }
@@ -1041,12 +1042,12 @@ class ZoomBotAdapter {
       });
 
       if (clicked) {
-        console.log("[ZoomBot] Enabled CC via text search");
+        log.info("zoomBot", "Enabled CC via text search");
       } else {
-        console.log("[ZoomBot] CC button not found — captions may not be available.");
+        log.info("zoomBot", "CC button not found — captions may not be available.");
       }
     } catch {
-      console.log("[ZoomBot] Could not find CC button — will try DOM scraping.");
+      log.info("zoomBot", "Could not find CC button — will try DOM scraping.");
     }
   }
 
@@ -1100,7 +1101,7 @@ class ZoomBotAdapter {
       } catch (err) {
         // Page might have been closed
         if (!this._stopped) {
-          console.warn(`[ZoomBot] Frame capture error: ${err.message}`);
+          log.warn("zoomBot", `Frame capture error: ${err.message}`);
         }
       }
 
@@ -1157,7 +1158,7 @@ class ZoomBotAdapter {
         }
       } catch (err) {
         if (!this._stopped) {
-          console.warn(`[ZoomBot] Caption scrape error: ${err.message}`);
+          log.warn("zoomBot", `Caption scrape error: ${err.message}`);
         }
       }
     }, CAPTION_POLL_MS);
@@ -1236,7 +1237,7 @@ class ZoomBotAdapter {
         });
       } catch (err) {
         if (!this._stopped) {
-          console.warn(`[ZoomBot] Participant scrape error: ${err.message}`);
+          log.warn("zoomBot", `Participant scrape error: ${err.message}`);
         }
       }
     }, PARTICIPANT_POLL_MS);
@@ -1271,9 +1272,9 @@ class ZoomBotAdapter {
         }
         return false;
       });
-      if (clicked) console.log("[ZoomBot] Opened participant panel.");
+      if (clicked) log.info("zoomBot", "Opened participant panel.");
     } catch (err) {
-      console.warn(`[ZoomBot] _openParticipantPanel error: ${err.message}`);
+      log.warn("zoomBot", `_openParticipantPanel error: ${err.message}`);
     }
   }
 
@@ -1297,7 +1298,7 @@ class ZoomBotAdapter {
       });
     } catch (err) {
       // exposeFunction may fail if already exposed (page navigated)
-      console.warn(`[ZoomBot] exposeFunction _onAudioChunk: ${err.message}`);
+      log.warn("zoomBot", `exposeFunction _onAudioChunk: ${err.message}`);
     }
 
     // Inject audio capture script into the page
@@ -1454,9 +1455,9 @@ class ZoomBotAdapter {
         console.log("[RealSync AudioCapture] Audio capture hooks installed.");
       }, chunkMs);
 
-      console.log("[ZoomBot] Audio capture started (in-browser hooks installed).");
+      log.info("zoomBot", "Audio capture started (in-browser hooks installed).");
     } catch (err) {
-      console.warn(`[ZoomBot] Failed to inject audio capture: ${err.message}`);
+      log.warn("zoomBot", `Failed to inject audio capture: ${err.message}`);
       this._audioCapturing = false;
     }
   }
@@ -1532,7 +1533,7 @@ class ZoomBotAdapter {
           });
 
           if (confirmClicked) {
-            console.log("[ZoomBot] Confirmed leave meeting.");
+            log.info("zoomBot", "Confirmed leave meeting.");
             await sleep(1000);
           }
         }
@@ -1564,7 +1565,7 @@ class ZoomBotAdapter {
     } catch { /* best effort */ }
 
     await this._cleanup();
-    console.log("[ZoomBot] Left meeting and cleaned up.");
+    log.info("zoomBot", "Left meeting and cleaned up.");
   }
 
   async _cleanup() {

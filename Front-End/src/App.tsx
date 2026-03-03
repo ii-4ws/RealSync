@@ -30,8 +30,8 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('dashboard');
   const [authView, setAuthView] = useState<'login' | 'signup'>('login');
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
-  const [userName, setUserName] = useState<string | undefined>('Demo User');
-  const [userEmail, setUserEmail] = useState<string | undefined>('demo@realsync.com');
+  const [userName, setUserName] = useState<string | undefined>(undefined);
+  const [userEmail, setUserEmail] = useState<string | undefined>(undefined);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
@@ -44,6 +44,7 @@ export default function App() {
   const [connectingTitle, setConnectingTitle] = useState<string>('');
   const [botProgress, setBotProgress] = useState<'creating' | 'joining' | 'streaming' | null>(null);
   const botProgressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [openNewSessionFlag, setOpenNewSessionFlag] = useState(0);
 
   // Final release behavior: real auth by default. If Supabase env vars are missing (common in local dev),
   // fall back to prototype mode so the UI can still render.
@@ -188,13 +189,13 @@ export default function App() {
 
   const needsOnboarding = !!session?.user?.id && profile?.username == null;
 
-  // Auto-dismiss the connecting screen: 30s hard timeout, or 1s after streaming confirmed
+  // Auto-dismiss the connecting screen: 15s hard timeout, or 1s after streaming confirmed
   useEffect(() => {
     if (!botConnecting) return;
     const timer = setTimeout(() => {
       setBotConnecting(false);
       setBotProgress(null);
-    }, 30000);
+    }, 15000);
     return () => {
       clearTimeout(timer);
       if (botProgressTimerRef.current) {
@@ -247,6 +248,12 @@ export default function App() {
     setActiveSessionId(null);
     setActiveMeetingTitle(null);
     setActiveMeetingType(null);
+  };
+
+  const handleNewSession = () => {
+    setCurrentScreen('sessions');
+    // Increment flag to trigger dialog open in SessionsScreen
+    setOpenNewSessionFlag((f) => f + 1);
   };
 
   return (
@@ -356,6 +363,7 @@ export default function App() {
           sessionId={activeSessionId}
           meetingTitle={activeMeetingTitle}
           meetingType={activeMeetingType}
+          onNewSession={handleNewSession}
         />
       )}
       {currentScreen === 'sessions' && (
@@ -366,11 +374,15 @@ export default function App() {
           userName={userName}
           userEmail={userEmail}
           onStartSession={handleStartSession}
+          activeSessionId={activeSessionId}
+          onNewSession={handleNewSession}
+          onEndSession={handleEndSession}
+          openNewSessionFlag={openNewSessionFlag}
         />
       )}
-      {currentScreen === 'reports' && <ReportsScreen onNavigate={navigateTo} onSignOut={handleSignOut} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />}
-      {currentScreen === 'settings' && <SettingsScreen onNavigate={navigateTo} onSignOut={handleSignOut} profilePhoto={profilePhoto} onSaveProfilePhoto={setProfilePhoto} userName={userName} onSaveUserName={setUserName} userEmail={userEmail} onSaveUserEmail={setUserEmail} />}
-      {currentScreen === 'faq' && <FAQScreen onNavigate={navigateTo} onSignOut={handleSignOut} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />}
+      {currentScreen === 'reports' && <ReportsScreen onNavigate={navigateTo} onSignOut={handleSignOut} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} activeSessionId={activeSessionId} onNewSession={handleNewSession} onEndSession={handleEndSession} />}
+      {currentScreen === 'settings' && <SettingsScreen onNavigate={navigateTo} onSignOut={handleSignOut} profilePhoto={profilePhoto} onSaveProfilePhoto={setProfilePhoto} userName={userName} onSaveUserName={setUserName} userEmail={userEmail} onSaveUserEmail={setUserEmail} activeSessionId={activeSessionId} onNewSession={handleNewSession} onEndSession={handleEndSession} />}
+      {currentScreen === 'faq' && <FAQScreen onNavigate={navigateTo} onSignOut={handleSignOut} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} activeSessionId={activeSessionId} onNewSession={handleNewSession} onEndSession={handleEndSession} />}
     </NotificationProvider>
     </WebSocketProvider>
   );

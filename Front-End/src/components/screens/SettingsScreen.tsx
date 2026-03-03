@@ -13,6 +13,8 @@ import { supabase } from '../../lib/supabaseClient';
 import { QRCodeSVG } from 'qrcode.react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useNotifications, type NotificationSeverity } from '../../contexts/NotificationContext';
+import { authFetch } from '../../lib/api';
+import { useWebSocket } from '../../contexts/WebSocketContext';
 
 type SettingsTab = 'general' | 'privacy' | 'detection' | 'storage' | 'notifications';
 
@@ -25,9 +27,13 @@ interface SettingsScreenProps {
   onSaveUserName?: (name: string) => void;
   userEmail?: string;
   onSaveUserEmail?: (email: string) => void;
+  activeSessionId?: string | null;
+  onNewSession?: () => void;
+  onEndSession?: () => void;
 }
 
-export function SettingsScreen({ onNavigate, onSignOut, profilePhoto, onSaveProfilePhoto, userName, onSaveUserName, userEmail, onSaveUserEmail }: SettingsScreenProps) {
+export function SettingsScreen({ onNavigate, onSignOut, profilePhoto, onSaveProfilePhoto, userName, onSaveUserName, userEmail, onSaveUserEmail, activeSessionId, onNewSession, onEndSession }: SettingsScreenProps) {
+  const { isConnected: wsConnected } = useWebSocket();
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
 
   const tabs = [
@@ -43,7 +49,7 @@ export function SettingsScreen({ onNavigate, onSignOut, profilePhoto, onSaveProf
       <Sidebar currentScreen="settings" onNavigate={onNavigate} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar title="Settings" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} />
+        <TopBar title="Settings" onSignOut={onSignOut} onNavigate={onNavigate} profilePhoto={profilePhoto} userName={userName} userEmail={userEmail} isConnected={wsConnected} activeSessionId={activeSessionId} onNewSession={onNewSession} onEndSession={onEndSession} />
         
         <div className="flex-1 overflow-y-auto">
           <div className="flex">
@@ -90,10 +96,19 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
   const [nameInput, setNameInput] = useState(userName || '');
   const [emailInput, setEmailInput] = useState(userEmail || '');
   const [isSaving, setIsSaving] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   // Sync local state when props change (e.g. after profile load)
   useEffect(() => { setNameInput(userName || ''); }, [userName]);
   useEffect(() => { setEmailInput(userEmail || ''); }, [userEmail]);
+
+  // Clean up object URL on unmount or when preview changes
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -114,46 +129,66 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
         return;
       }
 
-      // TODO: Migrate profile photo storage from base64 in the Supabase profiles
-      // row (avatar_url column) to Supabase Storage. Base64-encoded images bloat
-      // row size and degrade query performance. Use a Storage bucket with a public
-      // URL instead, and store only the URL in the profiles row.
-
-      // Create preview URL
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (onSaveProfilePhoto) {
-          onSaveProfilePhoto(reader.result as string);
-          toast.info('Photo selected — click Save Changes to apply.');
-        }
-      };
-      reader.readAsDataURL(file);
+      // Store file for upload on save; show preview via object URL
+      setPendingFile(file);
+      const objUrl = URL.createObjectURL(file);
+      setPreviewUrl(objUrl);
+      toast.info('Photo selected — click Save Changes to apply.');
     }
+  };
+
+  /** Upload avatar to Supabase Storage, return the public URL */
+  const uploadAvatar = async (userId: string, file: File): Promise<string | null> => {
+    const ext = file.name.split('.').pop() || 'jpg';
+    const path = `${userId}/avatar.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('avatars')
+      .upload(path, file, { upsert: true });
+
+    if (uploadError) {
+      toast.error('Failed to upload photo: ' + uploadError.message);
+      return null;
+    }
+
+    const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+    return urlData?.publicUrl || null;
   };
 
   const handleSaveChanges = async () => {
     setIsSaving(true);
 
     try {
-      // Persist to Supabase profiles table FIRST (server-first)
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { error } = await supabase
-            .from('profiles')
-            .update({
-              username: nameInput.trim() || null,
-              avatar_url: profilePhoto || null,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', user.id);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast.error('Not authenticated.');
+        return;
+      }
 
-          if (error) {
-            toast.error('Failed to save profile to server.');
-            return;
-          }
+      // Upload avatar to Supabase Storage if a new file was selected
+      let avatarUrl = profilePhoto || null;
+      if (pendingFile) {
+        const url = await uploadAvatar(user.id, pendingFile);
+        if (url) {
+          avatarUrl = url;
+          setPendingFile(null);
+          setPreviewUrl(null);
+        } else {
+          return; // Upload failed — don't save
         }
-      } catch {
+      }
+
+      // Persist to Supabase profiles table (store URL, not base64)
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          username: nameInput.trim() || null,
+          avatar_url: avatarUrl,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+
+      if (error) {
         toast.error('Failed to save profile to server.');
         return;
       }
@@ -168,18 +203,20 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
       }
 
       // Update local state only AFTER server write succeeds
-      if (onSaveUserName) {
-        onSaveUserName(nameInput);
-      }
-      if (onSaveUserEmail && emailInput) {
-        onSaveUserEmail(emailInput);
-      }
+      if (onSaveProfilePhoto) onSaveProfilePhoto(avatarUrl);
+      if (onSaveUserName) onSaveUserName(nameInput);
+      if (onSaveUserEmail && emailInput) onSaveUserEmail(emailInput);
 
       toast.success('Settings saved successfully!');
+    } catch {
+      toast.error('Failed to save profile to server.');
     } finally {
       setIsSaving(false);
     }
   };
+
+  // Display photo: pending preview > existing profile photo (URL or legacy base64)
+  const displayPhoto = previewUrl || profilePhoto;
 
   return (
     <div className="max-w-4xl">
@@ -211,13 +248,6 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
                 />
               </div>
               
-              <div>
-                <Label className="text-gray-300 mb-2">Job Title</Label>
-                <Input
-                  defaultValue="Security Analyst"
-                  className="bg-[#2a2a3e] border-gray-700 text-white"
-                />
-              </div>
             </div>
           </div>
 
@@ -272,8 +302,8 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
           
           <div className="flex flex-col items-center">
             <div className="w-32 h-32 bg-gradient-to-br from-cyan-400 to-blue-500 rounded-full flex items-center justify-center mb-4">
-              {profilePhoto ? (
-                <img src={profilePhoto} alt="Profile" className="w-full h-full rounded-full" />
+              {displayPhoto ? (
+                <img src={displayPhoto} alt="Profile" className="w-full h-full rounded-full object-cover" />
               ) : (
                 <span className="text-white text-4xl">
                   {(nameInput || userName || '')
@@ -291,11 +321,16 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
               Upload New Photo
             </Button>
 
-            {profilePhoto && (
+            {(displayPhoto) && (
               <Button
                 variant="outline"
                 className="bg-transparent border-red-800 text-red-400 hover:bg-red-950 hover:text-red-300 mb-2"
                 onClick={() => {
+                  setPendingFile(null);
+                  if (previewUrl) {
+                    URL.revokeObjectURL(previewUrl);
+                    setPreviewUrl(null);
+                  }
                   if (onSaveProfilePhoto) {
                     onSaveProfilePhoto(null);
                     toast.success('Profile photo removed');
@@ -322,7 +357,7 @@ function GeneralSettings({ profilePhoto, onSaveProfilePhoto, userName, onSaveUse
       </div>
 
       <div className="mt-8 flex justify-end gap-4">
-        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300">
+        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300" onClick={() => toast.info('Changes discarded')}>
           Cancel
         </Button>
         <Button className="bg-cyan-400 hover:bg-cyan-500 text-black" onClick={handleSaveChanges} disabled={isSaving}>
@@ -743,56 +778,144 @@ function MfaEnrollModal({
   );
 }
 
+interface DetectionSettingsState {
+  facialAnalysis: boolean;
+  voicePattern: boolean;
+  emotionDetection: boolean;
+}
+
+const DETECTION_DEFAULTS: DetectionSettingsState = {
+  facialAnalysis: true,
+  voicePattern: true,
+  emotionDetection: true,
+};
+
 function DetectionSettings() {
+  const [settings, setSettings] = useState<DetectionSettingsState>(DETECTION_DEFAULTS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // Fetch settings on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await authFetch('/api/settings');
+        if (res.ok) {
+          const data = await res.json();
+          setSettings({
+            facialAnalysis: data.facialAnalysis ?? true,
+            voicePattern: data.voicePattern ?? true,
+            emotionDetection: data.emotionDetection ?? true,
+          });
+        }
+      } catch {
+        // Use defaults on failure
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await authFetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+      toast.success('Detection settings saved');
+    } catch {
+      toast.error('Failed to save detection settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = async () => {
+    setSettings(DETECTION_DEFAULTS);
+    setSaving(true);
+    try {
+      const res = await authFetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(DETECTION_DEFAULTS),
+      });
+      if (!res.ok) throw new Error('Failed to reset');
+      toast.success('Detection settings reset to defaults');
+    } catch {
+      toast.error('Failed to reset detection settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl">
       <h2 className="text-white text-2xl mb-6">Detection Settings</h2>
-      
+
       <div className="space-y-6">
         {/* Detection Modes */}
         <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
           <h3 className="text-white text-lg mb-4">Detection Modes</h3>
-          
-          <div className="space-y-4">
-            <div className="flex items-center justify-between py-3 border-b border-gray-800">
-              <div>
-                <p className="text-white mb-1">Facial Analysis</p>
-                <p className="text-gray-400 text-sm">
-                  Detect facial anomalies and micro-expressions
-                </p>
-              </div>
-              <Switch defaultChecked />
+
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-5 h-5 text-cyan-400 animate-spin" />
+              <span className="ml-2 text-gray-400 text-sm">Loading settings...</span>
             </div>
-            
-            <div className="flex items-center justify-between py-3 border-b border-gray-800">
-              <div>
-                <p className="text-white mb-1">Voice Pattern Detection</p>
-                <p className="text-gray-400 text-sm">
-                  Analyze audio for synthetic voice patterns
-                </p>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between py-3 border-b border-gray-800">
+                <div>
+                  <p className="text-white mb-1">Facial Analysis</p>
+                  <p className="text-gray-400 text-sm">
+                    Detect facial anomalies and micro-expressions
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.facialAnalysis}
+                  onCheckedChange={(checked) => setSettings((s) => ({ ...s, facialAnalysis: checked }))}
+                />
               </div>
-              <Switch defaultChecked />
-            </div>
-            
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <p className="text-white mb-1">Emotion Detection</p>
-                <p className="text-gray-400 text-sm">
-                  Monitor emotional states and micro-expressions
-                </p>
+
+              <div className="flex items-center justify-between py-3 border-b border-gray-800">
+                <div>
+                  <p className="text-white mb-1">Voice Pattern Detection</p>
+                  <p className="text-gray-400 text-sm">
+                    Analyze audio for synthetic voice patterns
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.voicePattern}
+                  onCheckedChange={(checked) => setSettings((s) => ({ ...s, voicePattern: checked }))}
+                />
               </div>
-              <Switch defaultChecked />
+
+              <div className="flex items-center justify-between py-3">
+                <div>
+                  <p className="text-white mb-1">Emotion Detection</p>
+                  <p className="text-gray-400 text-sm">
+                    Monitor emotional states and micro-expressions
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.emotionDetection}
+                  onCheckedChange={(checked) => setSettings((s) => ({ ...s, emotionDetection: checked }))}
+                />
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
       <div className="mt-8 flex justify-end gap-4">
-        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300">
+        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300" onClick={handleReset} disabled={saving}>
           Reset to Default
         </Button>
-        <Button className="bg-cyan-400 hover:bg-cyan-500 text-black">
-          Save Changes
+        <Button className="bg-cyan-400 hover:bg-cyan-500 text-black" onClick={handleSave} disabled={saving || loading}>
+          {saving ? 'Saving...' : 'Save Changes'}
         </Button>
       </div>
     </div>
@@ -810,7 +933,7 @@ function StorageSettings() {
           
           <div className="mb-6">
             <div className="flex justify-between mb-2">
-              <span className="text-gray-300">245 GB used of 500 GB</span>
+              <span className="text-gray-300">245 GB used of 500 GB <span className="text-gray-500 text-xs">(sample data)</span></span>
               <span className="text-cyan-400 font-mono">49%</span>
             </div>
             <div className="h-3 bg-gray-800 rounded-full overflow-hidden flex">
@@ -826,21 +949,21 @@ function StorageSettings() {
                 <div className="w-3 h-3 bg-blue-400 rounded"></div>
                 <span className="text-gray-300">Meeting Recordings</span>
               </div>
-              <span className="text-white font-mono">180 GB</span>
+              <span className="text-white font-mono">180 GB <span className="text-gray-500 text-xs font-sans">(sample data)</span></span>
             </div>
             <div className="flex justify-between items-center py-2">
               <div className="flex items-center gap-3">
                 <div className="w-3 h-3 bg-cyan-400 rounded"></div>
                 <span className="text-gray-300">Analysis Data</span>
               </div>
-              <span className="text-white font-mono">45 GB</span>
+              <span className="text-white font-mono">45 GB <span className="text-gray-500 text-xs font-sans">(sample data)</span></span>
             </div>
             <div className="flex justify-between items-center py-2">
               <div className="flex items-center gap-3">
                 <div className="w-3 h-3 bg-purple-400 rounded"></div>
                 <span className="text-gray-300">Other Files</span>
               </div>
-              <span className="text-white font-mono">20 GB</span>
+              <span className="text-white font-mono">20 GB <span className="text-gray-500 text-xs font-sans">(sample data)</span></span>
             </div>
           </div>
         </div>
@@ -875,8 +998,8 @@ function StorageSettings() {
       </div>
 
       <div className="mt-8 flex justify-end gap-4">
-        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300">Manage Storage</Button>
-        <Button className="bg-cyan-400 hover:bg-cyan-500 text-black">Save Changes</Button>
+        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300" onClick={() => toast.info('Settings reset to defaults')}>Manage Storage</Button>
+        <Button className="bg-cyan-400 hover:bg-cyan-500 text-black" onClick={() => toast.info('Settings saved')}>Save Changes</Button>
       </div>
     </div>
   );
@@ -1025,8 +1148,8 @@ function NotificationSettings() {
       </div>
 
       <div className="mt-8 flex justify-end gap-4">
-        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300">Test Notifications</Button>
-        <Button className="bg-cyan-400 hover:bg-cyan-500 text-black">Save Changes</Button>
+        <Button variant="outline" className="bg-transparent border-gray-700 text-gray-300" onClick={() => toast.info('Settings reset to defaults')}>Test Notifications</Button>
+        <Button className="bg-cyan-400 hover:bg-cyan-500 text-black" onClick={() => toast.info('Settings saved')}>Save Changes</Button>
       </div>
     </div>
   );

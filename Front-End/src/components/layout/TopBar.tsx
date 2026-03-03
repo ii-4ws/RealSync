@@ -1,6 +1,7 @@
 import { Avatar, AvatarFallback } from '../ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
-import { LogOut, User } from 'lucide-react';
+import { LogOut, User, Plus, PhoneOff } from 'lucide-react';
+import { Button } from '../ui/button';
 import { NotificationBell } from './NotificationBell';
 
 interface TopBarProps {
@@ -10,9 +11,13 @@ interface TopBarProps {
   profilePhoto?: string | null;
   userName?: string;
   userEmail?: string;
+  isConnected?: boolean;
+  activeSessionId?: string | null;
+  onNewSession?: () => void;
+  onEndSession?: () => void;
 }
 
-export function TopBar({ title, onSignOut, onNavigate, profilePhoto, userName, userEmail }: TopBarProps) {
+export function TopBar({ title, onSignOut, onNavigate, profilePhoto, userName, userEmail, isConnected = false, activeSessionId, onNewSession, onEndSession }: TopBarProps) {
   const initials = userName
     ? userName.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
     : '??';
@@ -22,10 +27,33 @@ export function TopBar({ title, onSignOut, onNavigate, profilePhoto, userName, u
       <h1 className="text-white text-2xl">{title}</h1>
 
       <div className="flex items-center gap-4">
+        {/* New / End Session */}
+        {activeSessionId ? (
+          <Button
+            size="sm"
+            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2"
+            onClick={onEndSession}
+          >
+            <PhoneOff className="w-4 h-4 mr-2" />
+            End Session
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            className="bg-cyan-400 hover:bg-cyan-500 text-black px-4 py-2"
+            onClick={onNewSession}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            New Session
+          </Button>
+        )}
+
         {/* System Status */}
         <div className="flex items-center gap-2 px-4 py-2 bg-[#2a2a3e] rounded-lg">
-          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-          <span className="text-green-400 text-sm">System Online</span>
+          <div className={`w-2 h-2 rounded-full animate-pulse ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
+          <span className={`text-sm ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
+            {isConnected ? 'System Online' : 'System Offline'}
+          </span>
         </div>
 
         {/* Notification Bell */}

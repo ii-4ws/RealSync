@@ -42,9 +42,10 @@ export function WebSocketProvider({ sessionId, children }: WebSocketProviderProp
         reconnectTimerRef.current = null;
       }
       if (wsRef.current) {
-        wsRef.current.onclose = null;
-        wsRef.current.onerror = null;
-        wsRef.current.onmessage = null;
+        const noop = () => {};
+        wsRef.current.onclose = noop;
+        wsRef.current.onerror = noop;
+        wsRef.current.onmessage = noop;
         wsRef.current.close();
         wsRef.current = null;
       }
@@ -66,6 +67,32 @@ export function WebSocketProvider({ sessionId, children }: WebSocketProviderProp
         const ws = new WebSocket(buildWsUrl(subscribePath));
         wsRef.current = ws;
 
+        // C3: Client-side keepalive — ping every 25s, dead detection at 35s
+        let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+        let lastMessageAt = Date.now();
+        let deadCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+        const startHeartbeat = () => {
+          heartbeatInterval = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'ping' }));
+            }
+          }, 25_000);
+          deadCheckInterval = setInterval(() => {
+            if (Date.now() - lastMessageAt > 35_000) {
+              // No message in 35s — assume dead, close and trigger reconnect
+              ws.close();
+            }
+          }, 5_000);
+        };
+
+        const stopHeartbeat = () => {
+          if (heartbeatInterval) clearInterval(heartbeatInterval);
+          if (deadCheckInterval) clearInterval(deadCheckInterval);
+          heartbeatInterval = null;
+          deadCheckInterval = null;
+        };
+
         ws.onopen = async () => {
           if (!isActive) return;
           // Send auth token as first message (existing auth pattern)
@@ -79,6 +106,8 @@ export function WebSocketProvider({ sessionId, children }: WebSocketProviderProp
           }
           if (ws.readyState === WebSocket.OPEN) {
             setIsConnected(true);
+            lastMessageAt = Date.now();
+            startHeartbeat();
           }
           // H19: Reset backoff on successful connect
           reconnectDelayRef.current = 1000;
@@ -86,8 +115,11 @@ export function WebSocketProvider({ sessionId, children }: WebSocketProviderProp
 
         ws.onmessage = (event) => {
           if (!isActive) return;
+          lastMessageAt = Date.now();
           try {
             const message = JSON.parse(event.data);
+            // Ignore pong responses from server
+            if (message.type === 'pong') return;
             handlersRef.current.forEach((handler) => {
               try {
                 handler(message);
@@ -101,6 +133,7 @@ export function WebSocketProvider({ sessionId, children }: WebSocketProviderProp
         };
 
         ws.onclose = () => {
+          stopHeartbeat();
           if (!isActive) return;
           setIsConnected(false);
           wsRef.current = null;
