@@ -65,6 +65,7 @@ _no_face_lock = threading.Lock()
 def _get_face_detector():
     """Load MediaPipe face detector (lazy, per-thread to avoid serialization).
 
+    Uses the Tasks API (mediapipe >= 0.10.28) which replaced mp.solutions.
     Caches a sentinel value (False) on failure so we don't retry every frame.
     """
     detector = getattr(_thread_local, "face_detector", None)
@@ -72,15 +73,26 @@ def _get_face_detector():
         return detector if detector is not False else None
     try:
         import mediapipe as mp
-        detector = mp.solutions.face_detection.FaceDetection(
-            model_selection=0,
+        from mediapipe.tasks.python import BaseOptions, vision
+
+        # Model file path — downloaded blaze_face_short_range.tflite
+        model_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "src", "models", "blaze_face_short_range.tflite",
+        )
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Face detection model not found at {model_path}")
+
+        options = vision.FaceDetectorOptions(
+            base_options=BaseOptions(model_asset_path=model_path),
             min_detection_confidence=FACE_CONFIDENCE_THRESHOLD,
         )
+        detector = vision.FaceDetector.create_from_options(options)
         _thread_local.face_detector = detector
-        print("[inference] MediaPipe face detector loaded (thread-local)")
+        print("[inference] MediaPipe face detector loaded (Tasks API, thread-local)")
     except Exception as e:
         _thread_local.face_detector = False
-        print(f"[inference] Failed to load MediaPipe: {e}")
+        print(f"[inference] Failed to load MediaPipe face detector: {e}")
     return getattr(_thread_local, "face_detector", None) or None
 
 
@@ -133,7 +145,7 @@ def decode_frame(frame_b64: str) -> Optional[np.ndarray]:
 
 def detect_faces(img: np.ndarray) -> List[Dict]:
     """
-    Detect faces in an image using MediaPipe.
+    Detect faces in an image using MediaPipe Tasks API.
 
     Returns list of dicts:
         {
@@ -149,22 +161,28 @@ def detect_faces(img: np.ndarray) -> List[Dict]:
 
     h, w, _ = img.shape
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    results = detector.process(rgb)
+
+    # Tasks API requires mediapipe.Image wrapper
+    import mediapipe as mp
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+    results = detector.detect(mp_image)
 
     faces = []
     if not results.detections:
         return faces
 
     for i, det in enumerate(results.detections):
-        confidence = det.score[0]
+        # Tasks API: categories list with score
+        confidence = det.categories[0].score if det.categories else 0.0
         if confidence < FACE_CONFIDENCE_THRESHOLD:
             continue
 
-        box = det.location_data.relative_bounding_box
-        x = int(box.xmin * w)
-        y = int(box.ymin * h)
-        bw = int(box.width * w)
-        bh = int(box.height * h)
+        # Tasks API: bounding_box has origin_x, origin_y, width, height in pixels
+        box = det.bounding_box
+        x = box.origin_x
+        y = box.origin_y
+        bw = box.width
+        bh = box.height
 
         # Add padding
         pad_w = int(bw * FACE_PADDING_PERCENT)

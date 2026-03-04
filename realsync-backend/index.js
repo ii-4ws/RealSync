@@ -117,7 +117,7 @@ const PORT = process.env.PORT || 4000;
 const BEHAVIORAL_ANALYSIS_INTERVAL_MS = 15_000;
 const MAX_AUDIO_BUFFER_CHUNKS = 128;
 const AUDIO_ANALYSIS_INTERVAL_MS = 4_000;
-const AUDIO_DEEPFAKE_ENABLED = process.env.AUDIO_DEEPFAKE_ENABLED === "true";
+const AUDIO_DEEPFAKE_ENABLED = process.env.AUDIO_DEEPFAKE_ENABLED !== "false";
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const toFixedNumber = (value, digits = 4) =>
@@ -406,8 +406,25 @@ const broadcastToSession = (sessionId, message) => {
 };
 
 const server = http.createServer(app);
-const wssSubscribe = new WebSocket.Server({ server, path: "/ws", maxPayload: 256 * 1024 });
-const wssIngest = new WebSocket.Server({ server, path: "/ws/ingest", maxPayload: 2 * 1024 * 1024 });
+const wssSubscribe = new WebSocket.Server({ noServer: true, maxPayload: 256 * 1024 });
+const wssIngest = new WebSocket.Server({ noServer: true, maxPayload: 2 * 1024 * 1024 });
+
+// Manual upgrade routing: two WS servers on one HTTP server require noServer
+// mode so they don't race to abort each other's connections.
+server.on("upgrade", (req, socket, head) => {
+  const { pathname } = new URL(req.url, "http://localhost");
+  if (pathname === "/ws") {
+    wssSubscribe.handleUpgrade(req, socket, head, (ws) => {
+      wssSubscribe.emit("connection", ws, req);
+    });
+  } else if (pathname === "/ws/ingest") {
+    wssIngest.handleUpgrade(req, socket, head, (ws) => {
+      wssIngest.emit("connection", ws, req);
+    });
+  } else {
+    socket.destroy();
+  }
+});
 
 wssSubscribe.on("connection", async (socket, req) => {
   const url = new URL(req.url, "http://localhost");
@@ -802,6 +819,12 @@ wssIngest.on("connection", async (socket, req) => {
       session.botStatus = message.status || "connected";
       session.botStreams = message.streams || { audio: false, video: false, captions: false };
 
+      // Mark source as external when bot connects so broadcast loop
+      // stops overwriting real data with simulated metrics
+      if (session.botStatus === "connected" || session.botStatus === "joining") {
+        session.source = "external";
+      }
+
       broadcastToSession(session.id, {
         type: "sourceStatus",
         status: session.botStatus,
@@ -869,7 +892,7 @@ async function handleFrame(session, message) {
       timestamp: result.processedAt || makeIso(),
       source: result.source === "mock" ? "simulated" : "external",
     };
-    session.source = result.source === "mock" ? "simulated" : "external";
+    session.source = (result.source === "mock") ? "simulated" : "external";
 
     // H7: Broadcast moved AFTER trust recomputation (below) so clients get audio-corrected trust
 
@@ -931,12 +954,16 @@ async function handleFrame(session, message) {
         // 4-signal weighted: video=0.35, audio=0.25, identity=0.25, behavior=0.15
         const videoSignal = result.aggregated.deepfake?.authenticityScore ?? 0.5;
         finalTrust = 0.35 * videoSignal + 0.25 * audioScore + 0.25 * identitySignal + 0.15 * behaviorConf;
+        session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));
+      } else if (result.aggregated.trustScore != null) {
+        // Use AI service's pre-computed 3-signal trust score directly to avoid drift
+        session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(result.aggregated.trustScore.toFixed(4))));
       } else {
-        // 3-signal (no audio): video=0.47, identity=0.33, behavior=0.20
+        // Fallback: 3-signal (no audio): video=0.47, identity=0.33, behavior=0.20
         const videoSignal = result.aggregated.deepfake?.authenticityScore ?? 0.5;
         finalTrust = 0.47 * videoSignal + 0.33 * identitySignal + 0.20 * behaviorConf;
+        session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));
       }
-      session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));
     }
 
     // H7: Broadcast metrics AFTER trust recomputation so clients get audio-corrected values
@@ -957,7 +984,7 @@ const ensureBroadcastLoop = () => {
   broadcastInterval = setInterval(() => {
     sessions.forEach((session) => {
       if (session.endedAt) return;
-      if (session.source !== "external") {
+      if (session.source !== "external" && session.botStatus !== "connected" && session.botStatus !== "joining") {
         session.metrics = generateSimulatedMetrics();
       }
       broadcastToSession(session.id, {
@@ -1172,6 +1199,8 @@ app.post("/api/sessions/:id/stop", requireSessionOwner(getSession, rehydrateSess
 /** Shared ingest message processor used by both WS handler and bot callback. */
 function processIngestMessage(session, message) {
   if (message.type === "frame") {
+    // Validate frame size (same as WS ingest handler)
+    if (typeof message.dataB64 === "string" && message.dataB64.length > 2 * 1024 * 1024) return;
     handleFrame(session, message).catch((err) => {
       log.warn("ingest", `Frame analysis error for session ${session.id}: ${err?.message ?? err}`);
     });
@@ -1190,6 +1219,10 @@ function processIngestMessage(session, message) {
   } else if (message.type === "source_status") {
     session.botStatus = message.status || "connected";
     session.botStreams = message.streams || {};
+    // Mark source as external when bot connects
+    if (session.botStatus === "connected" || session.botStatus === "joining") {
+      session.source = "external";
+    }
     broadcastToSession(session.id, {
       type: "sourceStatus",
       status: session.botStatus,
@@ -1220,6 +1253,9 @@ function processIngestMessage(session, message) {
     );
     broadcastToSession(session.id, { type: "participants", participants: participantList, ts: now });
   } else if (message.type === "audio_pcm") {
+    // Validate audio format (same as WS ingest handler)
+    if (message.sampleRate && message.sampleRate !== 16000) return;
+    if (message.channels && message.channels !== 1) return;
     if (!session.stt) {
       session.stt = createSttStream({
         onTranscript: (t) => handleTranscript(session, t),
@@ -1304,6 +1340,7 @@ app.post("/api/sessions/:id/join", requireSessionOwner(getSession, rehydrateSess
 
   session.meetingUrl = meetingUrl;
   session.botStatus = "joining";
+  session.source = "external"; // prevent simulated metrics from overwriting real bot data
 
   const result = botManager.startBot({
     sessionId: session.id,

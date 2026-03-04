@@ -98,7 +98,10 @@ async def lifespan(app: FastAPI):
     try:
         dummy_img = np.zeros((256, 256, 3), dtype=np.uint8)
         if face_det is not None:
-            face_det.process(cv2.cvtColor(dummy_img, cv2.COLOR_BGR2RGB))
+            # Tasks API: use detect() with mp.Image wrapper
+            import mediapipe as mp
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(dummy_img, cv2.COLOR_BGR2RGB))
+            face_det.detect(mp_image)
         if facenet is not None:
             dummy_face = np.zeros((160, 160, 3), dtype=np.uint8)
             tracker.compute_embedding(dummy_face)
@@ -219,7 +222,7 @@ async def health(request: Request):
 
 
 @app.post("/api/analyze/frame")
-@limiter.limit("30/minute")
+@limiter.limit("60/minute")
 async def analyze_frame_endpoint(request: Request, payload: AnalyzeFrameRequest):
     """Analyze a video frame for deepfake, emotion, and identity signals."""
     if not payload.frameB64 or not payload.frameB64.strip():
@@ -306,7 +309,7 @@ async def analyze_text_endpoint(request: Request, payload: AnalyzeTextRequest):
 
 
 @app.post("/api/sessions/{session_id}/clear-identity")
-@limiter.limit("10/minute")
+@limiter.limit("60/minute")
 async def clear_identity(request: Request, session_id: str):
     """Clear stored identity baselines, temporal buffer, and no-face counters for a session."""
     if not session_id or len(session_id) > 64 or not re.match(r'^[a-zA-Z0-9_-]+$', session_id):

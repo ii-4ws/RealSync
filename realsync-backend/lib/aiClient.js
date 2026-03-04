@@ -12,7 +12,7 @@ const { EMOTIONS } = require("./constants");
 
 const AI_SERVICE_URL =
   process.env.AI_SERVICE_URL || "http://localhost:5100";
-const ANALYZE_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 5000);
+const ANALYZE_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 15000);
 const AI_API_KEY = process.env.AI_API_KEY || "";
 
 function generateMockResponse(sessionId, capturedAt) {

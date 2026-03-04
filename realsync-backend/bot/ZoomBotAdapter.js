@@ -55,11 +55,11 @@ class ZoomBotAdapter {
     // Validate meeting URL points to a Zoom domain
     try {
       const parsed = new URL(meetingUrl);
-      if (parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.zoom.us')) {
+      if (parsed.protocol !== 'https:' || !(parsed.hostname.endsWith('.zoom.us') || parsed.hostname.endsWith('.zoom.com'))) {
         throw new Error('Invalid host');
       }
     } catch {
-      throw new Error(`[ZoomBot] Invalid meeting URL — must be a https://*.zoom.us link: ${meetingUrl}`);
+      throw new Error(`[ZoomBot] Invalid meeting URL — must be a https://*.zoom.us or https://*.zoom.com link: ${meetingUrl}`);
     }
     this.meetingUrl = meetingUrl;
     this.displayName = displayName || DEFAULT_DISPLAY_NAME;
@@ -183,7 +183,7 @@ class ZoomBotAdapter {
 
       // Validate URL before navigation to prevent SSRF
       const meetingParsed = new URL(this.meetingUrl);
-      if (meetingParsed.protocol !== 'https:' || !meetingParsed.hostname.endsWith('.zoom.us')) {
+      if (meetingParsed.protocol !== 'https:' || !(meetingParsed.hostname.endsWith('.zoom.us') || meetingParsed.hostname.endsWith('.zoom.com'))) {
         throw new Error(`[ZoomBot] Refused to navigate — not a Zoom URL: ${this.meetingUrl}`);
       }
       log.info("zoomBot", `Navigating to: ${this.meetingUrl}`);
