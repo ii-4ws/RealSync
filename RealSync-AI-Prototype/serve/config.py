@@ -19,8 +19,11 @@ EFFICIENTNET_WEIGHTS_PATH = os.path.join(MODELS_DIR, "efficientnet_b4_deepfake.p
 EMOTION_INPUT_SIZE = 128  # pixels
 EMOTION_WEIGHTS_PATH = os.path.join(MODELS_DIR, "emotion_weights.pth")
 
-# AASIST audio deepfake detection
+# AASIST audio deepfake detection (legacy)
 AASIST_WEIGHTS_PATH = os.path.join(MODELS_DIR, "aasist_weights.pth")
+
+# WavLM audio deepfake detection (replaces AASIST)
+WAVLM_WEIGHTS_PATH = os.path.join(MODELS_DIR, "wavlm_audio_weights.pth")
 
 # Face detection
 FACE_CONFIDENCE_THRESHOLD = 0.4
@@ -30,15 +33,15 @@ FACE_CROP_SIZE = 224  # pixels
 # Identity tracking — FaceNet InceptionResnetV1
 FACENET_INPUT_SIZE = 160  # pixels, required by InceptionResnetV1
 FACENET_PRETRAINED = 'vggface2'  # pretrained weights dataset
-IDENTITY_SHIFT_LOW = 0.20  # below this = low risk
-IDENTITY_SHIFT_HIGH = 0.40  # above this = high risk
+IDENTITY_SHIFT_LOW = 0.30  # below this = low risk (was 0.20; 30-deg head turn = 0.15-0.25)
+IDENTITY_SHIFT_HIGH = 0.50  # above this = high risk (was 0.40; only flag extreme drift)
 
 # Temporal analysis
 TEMPORAL_WINDOW_SIZE = 30
-TEMPORAL_TRUST_DROP_THRESHOLD = 0.20
-TEMPORAL_IDENTITY_SWITCH_LOW = 0.15
-TEMPORAL_IDENTITY_SWITCH_HIGH = 0.35
-TEMPORAL_EMOTION_CHANGE_THRESHOLD = 5
+TEMPORAL_TRUST_DROP_THRESHOLD = 0.30   # was 0.20; Zoom jitter causes 0.15-0.25 fluctuations
+TEMPORAL_IDENTITY_SWITCH_LOW = 0.25    # was 0.15; avg must be firmly same-person before switch is suspicious
+TEMPORAL_IDENTITY_SWITCH_HIGH = 0.50   # was 0.35; requires genuinely high shift to trigger
+TEMPORAL_EMOTION_CHANGE_THRESHOLD = 10 # was 5; normal conversation = 5-8 emotion changes per 30 frames
 
 # Deepfake thresholds (H9: renamed for clarity)
 DEEPFAKE_AUTH_THRESHOLD_LOW_RISK = 0.70   # above → low risk
@@ -49,8 +52,8 @@ EMOTION_LABELS = ["Happy", "Neutral", "Angry", "Fear", "Surprise", "Sad"]
 
 # --- Session & Identity ---
 SESSION_TTL_SECONDS = 3600
-IDENTITY_SAME_PERSON_THRESHOLD = 0.25
-IDENTITY_EMA_ALPHA = 0.1
+IDENTITY_SAME_PERSON_THRESHOLD = 0.35  # was 0.25; head turn to 0.25 shouldn't flag "different person"
+IDENTITY_EMA_ALPHA = 0.05              # was 0.1; slower baseline drift, transient movements don't shift permanently
 SESSION_EVICTION_TRIGGER = 50
 
 # --- Temporal Analysis ---

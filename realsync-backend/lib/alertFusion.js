@@ -19,12 +19,12 @@ const THRESHOLDS = {
     high: 0.45,   // authenticityScore <= this → high risk
   },
   identity: {
-    medium: 0.20, // embeddingShift >= this → medium risk
-    high: 0.40,   // embeddingShift >= this → high risk
+    medium: 0.30, // embeddingShift >= this → medium risk (was 0.20)
+    high: 0.50,   // embeddingShift >= this → high risk (was 0.40)
   },
   emotion: {
-    angerMedium: 0.75,
-    angerHigh: 0.85,
+    angerMedium: 0.80, // was 0.75
+    angerHigh: 0.90,   // was 0.85
   },
 };
 

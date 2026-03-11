@@ -1,8 +1,9 @@
 """
-AASIST audio deepfake detection model.
+WavLM audio deepfake detection model.
 
-Lightweight anti-spoofing model using sinc-convolution encoder with
-attention pooling. Processes raw PCM16 waveforms at 16kHz.
+Uses microsoft/wavlm-base as a feature extractor with a lightweight
+classification head fine-tuned on ASVspoof 2019 LA with codec augmentation.
+WavLM's denoising pre-training makes it robust to Zoom/Opus compression.
 
 Input: base64-encoded PCM16 mono 16kHz audio (4 seconds = 64000 samples).
 Output: {"authenticityScore": float, "riskLevel": str, "model": str}
@@ -14,162 +15,108 @@ import threading
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from serve.config import (
-    AASIST_WEIGHTS_PATH,
+    WAVLM_WEIGHTS_PATH,
     DEEPFAKE_AUTH_THRESHOLD_LOW_RISK,
     DEEPFAKE_AUTH_THRESHOLD_HIGH_RISK,
     AUDIO_SAMPLE_RATE,
     AUDIO_TARGET_LENGTH,
 )
 
-MODEL_NAME = "AASIST"
+MODEL_NAME = "WavLM-Audio"
 SAMPLE_RATE = AUDIO_SAMPLE_RATE
 TARGET_LENGTH = AUDIO_TARGET_LENGTH
 
 
 # ---------------------------------------------------------------
-# AASIST-inspired architecture
+# Model architecture
 # ---------------------------------------------------------------
 
-class SincConv(nn.Module):
-    """Sinc-based convolution for raw waveform processing."""
-
-    def __init__(self, out_channels=70, kernel_size=251, sample_rate=16000):
-        super().__init__()
-        self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.sample_rate = sample_rate
-
-        low_hz = 30.0
-        high_hz = sample_rate / 2.0 - (sample_rate / 2.0 / out_channels)
-        mel_low = 2595.0 * np.log10(1.0 + low_hz / 700.0)
-        mel_high = 2595.0 * np.log10(1.0 + high_hz / 700.0)
-        mel_points = np.linspace(mel_low, mel_high, out_channels + 1)
-        hz_points = 700.0 * (10.0 ** (mel_points / 2595.0) - 1.0)
-
-        self.low_hz_ = nn.Parameter(torch.tensor(hz_points[:-1]).float().view(-1, 1))
-        self.band_hz_ = nn.Parameter(torch.tensor(np.diff(hz_points)).float().view(-1, 1))
-
-        n = (kernel_size - 1) / 2.0
-        self.register_buffer("n_", 2 * np.pi * torch.arange(-n, 0).float().view(1, -1) / sample_rate)
-
-    def forward(self, x):
-        low = torch.abs(self.low_hz_) + 1.0
-        high = torch.clamp(low + torch.abs(self.band_hz_), min=2.0, max=self.sample_rate / 2.0)
-
-        f_low = low * self.n_
-        f_high = high * self.n_
-
-        band_pass_left = (torch.sin(f_high) - torch.sin(f_low)) / (self.n_ + 1e-8)
-        band_pass_center = 2.0 * (high - low).squeeze(-1)
-        band_pass_right = torch.flip(band_pass_left, dims=[1])
-
-        band_pass = torch.cat([band_pass_left, band_pass_center.unsqueeze(1), band_pass_right], dim=1)
-        band_pass = band_pass / (2.0 * high + 1e-8)
-
-        filters = band_pass.view(self.out_channels, 1, self.kernel_size)
-        return F.conv1d(x, filters, stride=1, padding=self.kernel_size // 2)
-
-
-class AudioDeepfakeNet(nn.Module):
+class WavLMAudioClassifier(nn.Module):
     """
-    AASIST-inspired audio deepfake detection network.
+    WavLM-base encoder + classification head for audio deepfake detection.
 
-    SincConv -> Conv Blocks -> Attention Pooling -> Binary output
+    Architecture:
+        WavLMModel (frozen or partial-unfreeze) -> mean pool -> Linear(768,256) -> ReLU -> Dropout -> Linear(256,1) -> Sigmoid
     """
 
-    def __init__(self, sinc_channels=70):
+    def __init__(self, freeze_encoder=True):
         super().__init__()
-        self.sinc = SincConv(out_channels=sinc_channels, kernel_size=251)
-        self.bn0 = nn.BatchNorm1d(sinc_channels)
+        from transformers import WavLMModel
+        self.encoder = WavLMModel.from_pretrained("microsoft/wavlm-base")
 
-        self.block1 = self._conv_block(sinc_channels, 128)
-        self.block2 = self._conv_block(128, 128)
-        self.block3 = self._conv_block(128, 256)
-        self.block4 = self._conv_block(256, 256)
-
-        self.attention = nn.Sequential(
-            nn.Linear(256, 128),
-            nn.Tanh(),
-            nn.Linear(128, 1),
-        )
+        if freeze_encoder:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
 
         self.classifier = nn.Sequential(
-            nn.Linear(256, 128),
+            nn.Linear(768, 256),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(128, 1),
+            nn.Linear(256, 1),
         )
 
-    def _conv_block(self, in_ch, out_ch):
-        return nn.Sequential(
-            nn.Conv1d(in_ch, out_ch, 3, padding=1),
-            nn.BatchNorm1d(out_ch),
-            nn.LeakyReLU(0.3),
-            nn.Conv1d(out_ch, out_ch, 3, padding=1),
-            nn.BatchNorm1d(out_ch),
-            nn.LeakyReLU(0.3),
-            nn.MaxPool1d(2),
-        )
-
-    def forward(self, x):
-        # x: (batch, 1, samples)
-        x = self.sinc(x)
-        x = self.bn0(x)
-        x = F.leaky_relu(x, 0.3)
-        x = F.max_pool1d(x, 2)
-
-        x = self.block1(x)
-        x = self.block2(x)
-        x = self.block3(x)
-        x = self.block4(x)
-
-        # Attention pooling: (batch, channels, time) -> (batch, channels)
-        x_t = x.permute(0, 2, 1)  # (batch, time, channels)
-        attn_weights = F.softmax(self.attention(x_t), dim=1)  # (batch, time, 1)
-        x_pooled = (x_t * attn_weights).sum(dim=1)  # (batch, channels)
-
-        logit = self.classifier(x_pooled)  # (batch, 1)
-        return torch.sigmoid(logit)
+    def forward(self, input_values):
+        """
+        Args:
+            input_values: (batch, seq_len) raw waveform tensor, normalized by Wav2Vec2FeatureExtractor
+        Returns:
+            (batch, 1) sigmoid output — P(spoof)
+        """
+        outputs = self.encoder(input_values)
+        hidden_states = outputs.last_hidden_state  # (batch, seq_len, 768)
+        pooled = hidden_states.mean(dim=1)          # (batch, 768)
+        logits = self.classifier(pooled)             # (batch, 1)
+        return torch.sigmoid(logits)
 
 
 # ---------------------------------------------------------------
 # Lazy-loaded singleton
 # ---------------------------------------------------------------
 
-_LOAD_FAILED = object()  # Sentinel to prevent infinite retry on load failure
+_LOAD_FAILED = object()
 _model = None
+_processor = None
 _lock = threading.Lock()
 
 
 def get_audio_model():
     """Load or return the cached audio deepfake model (thread-safe)."""
-    global _model
+    global _model, _processor
     if _model is not None:
         return None if _model is _LOAD_FAILED else _model
     with _lock:
         if _model is not None:
             return None if _model is _LOAD_FAILED else _model
         try:
-            net = AudioDeepfakeNet()
-            if os.path.isfile(AASIST_WEIGHTS_PATH):
-                state = torch.load(AASIST_WEIGHTS_PATH, map_location="cpu", weights_only=True)
-                state_dict = state.get("model_state_dict", state)
-                net.load_state_dict(state_dict, strict=True)
-                print(f"[audio] Loaded AASIST weights from {AASIST_WEIGHTS_PATH}")
+            from transformers import Wav2Vec2FeatureExtractor
+
+            # WavLM uses the same feature extractor as Wav2Vec2
+            _processor = Wav2Vec2FeatureExtractor.from_pretrained("microsoft/wavlm-base")
+
+            net = WavLMAudioClassifier(freeze_encoder=True)
+
+            if os.path.isfile(WAVLM_WEIGHTS_PATH):
+                state = torch.load(WAVLM_WEIGHTS_PATH, map_location="cpu", weights_only=True)
+                head_state = state.get("classifier_state_dict", state.get("model_state_dict", state))
+                if "classifier_state_dict" in state:
+                    net.classifier.load_state_dict(head_state)
+                else:
+                    net.load_state_dict(head_state, strict=False)
+                print(f"[audio] Loaded WavLM classification head from {WAVLM_WEIGHTS_PATH}")
             else:
-                print(f"[audio] WARNING: AASIST weights not found at {AASIST_WEIGHTS_PATH}")
-                print("[audio] Model disabled — no weights available")
+                print(f"[audio] WARNING: WavLM weights not found at {WAVLM_WEIGHTS_PATH}")
+                print("[audio] Model disabled — no trained classification head available")
                 _model = _LOAD_FAILED
                 return None
+
             net.train(False)
-            # #6: Move to MPS device for GPU inference (matches deepfake/emotion models)
             _device = "mps" if torch.backends.mps.is_available() else "cpu"
             net = net.to(_device)
             net._device = _device
             _model = net
+            print(f"[audio] Using device: {_device}")
             print(f"[audio] {MODEL_NAME} model ready on {_device}")
         except Exception as exc:
             print(f"[audio] Failed to load audio model: {exc}")
@@ -207,14 +154,22 @@ def predict_audio(audio_b64: str) -> dict:
             waveform = waveform[:TARGET_LENGTH]
 
         device = getattr(model, '_device', 'cpu')
-        tensor = torch.from_numpy(waveform).float().unsqueeze(0).unsqueeze(0).to(device)  # (1, 1, 64000)
+        inputs = _processor(
+            waveform,
+            sampling_rate=SAMPLE_RATE,
+            return_tensors="pt",
+            padding=False,
+        )
+        input_values = inputs.input_values.to(device)  # (1, seq_len)
 
         with torch.no_grad():
-            raw = model(tensor)
+            raw = model(input_values)
             prediction = float(raw[0][0])
 
         # Model outputs P(spoof). Convert to authenticity.
         authenticity = round(1.0 - prediction, 4)
+
+        print(f"[audio] raw_spoof_prob={prediction:.4f} authenticity={authenticity:.4f}")
 
         if authenticity > DEEPFAKE_AUTH_THRESHOLD_LOW_RISK:
             risk = "low"

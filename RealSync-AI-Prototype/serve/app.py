@@ -2,7 +2,7 @@
 RealSync AI Inference Service — FastAPI Server.
 
 Multi-modal analysis: video deepfake (EfficientNet-B4+SBI), emotion (MobileNetV2),
-identity (FaceNet), audio deepfake (AASIST), and behavioral text (DeBERTa-v3).
+identity (FaceNet), audio deepfake (WavLM), and behavioral text (DeBERTa-v3).
 
 Run:
     cd RealSync-AI-Prototype
@@ -84,7 +84,7 @@ async def lifespan(app: FastAPI):
     if not emotion:
         print("[app] WARNING: MobileNetV2 emotion model failed to load")
     if not audio:
-        print("[app] WARNING: AASIST audio model failed to load")
+        print("[app] WARNING: WavLM audio model failed to load")
     if not text_pipe:
         print("[app] WARNING: DeBERTa text analyzer failed to load")
 
@@ -269,7 +269,7 @@ async def analyze_frame_endpoint(request: Request, payload: AnalyzeFrameRequest)
 @app.post("/api/analyze/audio")
 @limiter.limit("30/minute")
 async def analyze_audio_endpoint(request: Request, payload: AnalyzeAudioRequest):
-    """Analyze audio for deepfake detection using AASIST."""
+    """Analyze audio for deepfake detection using WavLM."""
     if not payload.audioB64:
         raise HTTPException(status_code=400, detail="audioB64 is required")
     if not payload.sessionId or not _UUID_RE.match(payload.sessionId):
