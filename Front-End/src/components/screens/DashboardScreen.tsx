@@ -59,11 +59,6 @@ type Metrics = {
     confidence: number;
     scores: Record<EmotionLabel, number>;
   };
-  identity: {
-    samePerson: boolean;
-    embeddingShift: number;
-    riskLevel: RiskLevel;
-  };
   deepfake: {
     authenticityScore: number;
     model: string;
@@ -95,11 +90,6 @@ const getFallbackMetrics = (): Metrics => ({
       Surprise: 0.01,
       Sad: 0.01,
     },
-  },
-  identity: {
-    samePerson: true,
-    embeddingShift: 0.12,
-    riskLevel: 'low',
   },
   deepfake: {
     authenticityScore: 0.96,
@@ -173,7 +163,6 @@ export function DashboardScreen({
         ...fallback,
         ...incoming,
         emotion: { ...fallback.emotion, ...incoming.emotion },
-        identity: { ...fallback.identity, ...incoming.identity },
         deepfake: { ...fallback.deepfake, ...incoming.deepfake },
         confidenceLayers: { ...fallback.confidenceLayers, ...incoming.confidenceLayers },
       } as Metrics);
@@ -238,6 +227,9 @@ export function DashboardScreen({
       if (newStatus === 'connected') {
         onBotConnected?.();
       }
+      if (newStatus === 'disconnected' && sessionId) {
+        onEndSession?.();
+      }
       return;
     }
 
@@ -247,7 +239,7 @@ export function DashboardScreen({
       setMetrics(payload as unknown as Metrics);
       setMetricsError(null);
     }
-  }, [onBotConnected, sessionId]);
+  }, [onBotConnected, onEndSession, sessionId]);
 
   useWsMessages(handleWsMessage);
 
@@ -273,7 +265,7 @@ export function DashboardScreen({
     };
 
     fetchMetrics();
-    const interval = window.setInterval(fetchMetrics, 2000);
+    const interval = window.setInterval(fetchMetrics, 1500);
     return () => window.clearInterval(interval);
   }, [wsConnected, sessionId]);
 
@@ -344,15 +336,6 @@ export function DashboardScreen({
         });
       }
 
-      if (displayMetrics.identity.riskLevel !== 'low') {
-        items.push({
-          id: 'metric-identity',
-          type: displayMetrics.identity.riskLevel === 'high' ? 'error' : 'warning',
-          message: 'Face embedding drift above baseline.',
-          time: 'just now',
-        });
-      }
-
       if (displayMetrics.emotion.label !== 'Neutral' && displayMetrics.emotion.confidence > 0.7) {
         items.push({
           id: 'metric-emotion',
@@ -384,9 +367,16 @@ export function DashboardScreen({
     return [
       { label: 'Audio', value: toPercent(displayMetrics.confidenceLayers.audio ?? 0), color: displayMetrics.confidenceLayers.audio == null ? 'bg-gray-600' : 'bg-cyan-400' },
       { label: 'Video', value: displayMetrics.cameraOff ? 0 : toPercent(displayMetrics.confidenceLayers.video ?? 0), color: displayMetrics.cameraOff ? 'bg-gray-600' : 'bg-cyan-400' },
-      { label: 'Behavior', value: toPercent(displayMetrics.confidenceLayers.behavior ?? 0), color: 'bg-orange-400' },
+      { label: 'Behavior', value: displayMetrics.cameraOff ? 0 : toPercent(displayMetrics.confidenceLayers.behavior ?? 0), color: displayMetrics.cameraOff ? 'bg-gray-600' : 'bg-orange-400' },
     ];
   }, [displayMetrics, hasData]);
+
+  const audioRiskLevel: RiskLevel = useMemo(() => {
+    const score = displayMetrics.confidenceLayers?.audio;
+    if (score == null || score >= 0.7) return 'low';
+    if (score >= 0.4) return 'medium';
+    return 'high';
+  }, [displayMetrics.confidenceLayers?.audio]);
 
   return (
     <div className="flex h-screen bg-[#0f0f1e]">
@@ -568,60 +558,62 @@ export function DashboardScreen({
             {/* Facial Emotion Recognition */}
             <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
               <h3 className="text-white text-lg mb-4">Facial Emotion Recognition</h3>
-              {hasData && displayMetrics.analyzedParticipant && (
-                <p className="text-cyan-400 text-xs mb-2">Analyzing: {displayMetrics.analyzedParticipant}</p>
+              {displayMetrics.cameraOff ? (
+                <div className="flex flex-col items-center justify-center py-6 text-center">
+                  <div className="w-12 h-12 rounded-full bg-gray-700 flex items-center justify-center mb-3">
+                    <svg className="w-6 h-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+                  </div>
+                  <p className="text-gray-300 font-medium">Camera Off</p>
+                  <p className="text-gray-500 text-sm mt-1">Audio-only analysis active</p>
+                </div>
+              ) : (
+                <>
+                  {hasData && displayMetrics.analyzedParticipant && (
+                    <p className="text-cyan-400 text-xs mb-2">Analyzing: {displayMetrics.analyzedParticipant}</p>
+                  )}
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <p className="text-gray-400 text-sm">Live Emotion</p>
+                      <p className="text-3xl text-white">{hasData ? (displayMetrics.emotion.confidence < 0.40 ? 'Neutral' : displayMetrics.emotion.label) : '--'}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-gray-400 text-sm">Confidence</p>
+                      <p className="text-2xl text-cyan-400 font-mono">{hasData ? `${toPercent(displayMetrics.emotion.confidence)}%` : '--%'}</p>
+                    </div>
+                  </div>
+                </>
               )}
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <p className="text-gray-400 text-sm">Live Emotion</p>
-                  <p className="text-3xl text-white">{hasData ? (displayMetrics.emotion.confidence < 0.40 ? 'Neutral' : displayMetrics.emotion.label) : '--'}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-gray-400 text-sm">Confidence</p>
-                  <p className="text-2xl text-cyan-400 font-mono">{hasData ? `${toPercent(displayMetrics.emotion.confidence)}%` : '--%'}</p>
-                </div>
-              </div>
             </div>
 
-            {/* Face Presence & Identity Consistency */}
+            {/* Audio Manipulation Detection */}
             <div className="bg-[#1a1a2e] rounded-xl p-6 border border-gray-800">
-              <h3 className="text-white text-lg mb-4">Identity Consistency</h3>
+              <h3 className="text-white text-lg mb-4">Audio Manipulation Detection</h3>
               {hasData && displayMetrics.analyzedParticipant && (
                 <p className="text-cyan-400 text-xs mb-2">Analyzing: {displayMetrics.analyzedParticipant}</p>
               )}
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <p className="text-gray-400 text-sm">Presence</p>
-                  <p className="text-2xl text-white">{hasData ? (
-                    (displayMetrics.faceCount || 0) > 1
-                      ? 'Multiple faces'
-                      : displayMetrics.identity.samePerson ? 'Same face' : 'Drift detected'
-                  ) : '--'}</p>
+                  <p className="text-gray-400 text-sm">Authenticity Score</p>
+                  <p className="text-3xl text-white font-mono">
+                    {hasData && displayMetrics.confidenceLayers.audio != null
+                      ? `${toPercent(displayMetrics.confidenceLayers.audio)}%`
+                      : '--%'}
+                  </p>
                 </div>
                 <div className="text-right">
                   <p className="text-gray-400 text-sm">Risk</p>
-                  <p className={`text-2xl ${hasData ? (
-                    (displayMetrics.faceCount || 0) > 1
-                      ? 'text-blue-400'
-                      : getRiskColor(displayMetrics.identity.riskLevel)
-                  ) : 'text-gray-500'}`}>
-                    {hasData ? (
-                      (displayMetrics.faceCount || 0) > 1 ? 'expected' : displayMetrics.identity.riskLevel
-                    ) : '--'}
+                  <p className={`text-2xl ${hasData && displayMetrics.confidenceLayers.audio != null
+                    ? getRiskColor(audioRiskLevel)
+                    : 'text-gray-500'}`}>
+                    {hasData && displayMetrics.confidenceLayers.audio != null ? audioRiskLevel : '--'}
                   </p>
                 </div>
               </div>
-              <div>
-                <div className="flex justify-between text-xs text-gray-400 mb-1">
-                  <span>Embedding Shift</span>
-                  <span className="font-mono">{hasData ? displayMetrics.identity.embeddingShift.toFixed(3) : '--'}</span>
-                </div>
-                <div className="h-2 bg-[#2a2a3e] rounded-full overflow-hidden">
-                  <div
-                    className={`h-full ${displayMetrics.identity.riskLevel === 'high' ? 'bg-red-400' : displayMetrics.identity.riskLevel === 'medium' ? 'bg-yellow-400' : 'bg-green-400'}`}
-                    style={{ width: hasData ? `${toPercent(displayMetrics.identity.embeddingShift)}%` : '0%' }}
-                  ></div>
-                </div>
+              <div className="h-2 bg-[#2a2a3e] rounded-full overflow-hidden">
+                <div
+                  className={`h-full ${audioRiskLevel === 'high' ? 'bg-red-400' : audioRiskLevel === 'medium' ? 'bg-yellow-400' : 'bg-cyan-400'}`}
+                  style={{ width: hasData && displayMetrics.confidenceLayers.audio != null ? `${toPercent(displayMetrics.confidenceLayers.audio)}%` : '0%' }}
+                ></div>
               </div>
             </div>
 

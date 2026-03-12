@@ -140,14 +140,14 @@ def predict_deepfake(face_crop_bgr: np.ndarray) -> dict:
         raw_authenticity = 1.0 - prediction
 
         # I1: Sigmoid rescale — gradual curve to reduce jitter from Zoom compression.
-        # Observed Zoom real-face raw_auth: 0.01–0.15 (most frames).
-        # Actual deepfakes through Zoom score near 0.
-        # center=0.02, steepness=80: real faces (0.01-0.15) → ~0.45-0.80 stable;
-        # deepfakes (raw ~0.001) still score ~0.35 (high risk).
-        calibrated = 1.0 / (1.0 + math.exp(-80 * (raw_authenticity - 0.02)))
-        calibrated = 0.30 + calibrated * 0.65
+        # Actual Zoom real-face raw_auth: 0.0001–0.007 (median 0.003, p95 0.14).
+        # Zoom double-compression makes model score real faces near 0.
+        # center=0.003, steepness=300: maps median real face to 0.73 (low risk);
+        # even worst-case real frames (0.0001) score 0.63 (above alert thresholds).
+        calibrated = 1.0 / (1.0 + math.exp(-300 * (raw_authenticity - 0.003)))
+        calibrated = 0.50 + calibrated * 0.45
 
-        print(f"[deepfake] raw_prediction={prediction:.4f} raw_auth={raw_authenticity:.4f} calibrated={calibrated:.4f}")
+        print(f"[deepfake] raw_prediction={prediction:.4f} raw_auth={raw_authenticity:.4f} calibrated={calibrated:.4f}", flush=True)
         authenticity = round(max(0.0, min(1.0, calibrated)), 4)
 
         if authenticity > DEEPFAKE_AUTH_THRESHOLD_LOW_RISK:

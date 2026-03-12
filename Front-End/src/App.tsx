@@ -49,6 +49,9 @@ export default function App() {
   // I7: Track botConnecting state for stale callback guard
   const botConnectingRef = useRef(botConnecting);
   useEffect(() => { botConnectingRef.current = botConnecting; }, [botConnecting]);
+  // Track current user ID to avoid re-triggering loadingProfile for same user on tab switch
+  const currentUserIdRef = useRef<string | null>(null);
+  useEffect(() => { currentUserIdRef.current = session?.user?.id ?? null; }, [session?.user?.id]);
 
   // Final release behavior: real auth by default. If Supabase env vars are missing (common in local dev),
   // fall back to prototype mode so the UI can still render.
@@ -104,7 +107,11 @@ export default function App() {
         initialSessionHandled = true;
       }
       if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'INITIAL_SESSION') {
-        setLoadingProfile(!!nextSession?.user?.id);
+        const newId = nextSession?.user?.id;
+        // Only trigger profile loading if user ID is new (avoids stuck "Loading..." on tab switch)
+        if (newId && newId !== currentUserIdRef.current) {
+          setLoadingProfile(true);
+        }
       }
       if (event === 'SIGNED_OUT') {
         setLoadingProfile(false);
@@ -209,6 +216,43 @@ export default function App() {
     };
   }, [botConnecting]);
 
+  // Safety: auto-clear loadingProfile after 5s to prevent stuck "Loading..." screen
+  useEffect(() => {
+    if (!loadingProfile) return;
+    const timer = setTimeout(() => setLoadingProfile(false), 5000);
+    return () => clearTimeout(timer);
+  }, [loadingProfile]);
+
+  const handleEndSession = useCallback(async () => {
+    if (botProgressTimerRef.current) { clearTimeout(botProgressTimerRef.current); botProgressTimerRef.current = null; }
+    // Stop session via API so bot leaves meeting (works from any screen).
+    // Note: DashboardScreen.handleEndSession calls leave+stop itself before invoking this,
+    // so only make API calls if coming from a non-dashboard screen.
+    if (activeSessionId && currentScreen !== 'dashboard') {
+      try {
+        await authFetch(`/api/sessions/${activeSessionId}/leave`, { method: 'POST' }).catch(() => {});
+        await authFetch(`/api/sessions/${activeSessionId}/stop`, { method: 'POST' });
+      } catch {
+        // Best-effort — still clear local state
+      }
+    }
+    setActiveSessionId(null);
+    setActiveMeetingTitle(null);
+    setActiveMeetingType(null);
+  }, [activeSessionId, currentScreen]);
+
+  const handleBotConnected = useCallback(() => {
+    // I7: Guard against stale callback firing after overlay dismissed
+    if (!botConnectingRef.current) return;
+    setBotProgress('streaming');
+    if (botProgressTimerRef.current) { clearTimeout(botProgressTimerRef.current); }
+    botProgressTimerRef.current = setTimeout(() => {
+      setBotConnecting(false);
+      setBotProgress(null);
+      botProgressTimerRef.current = null;
+    }, 1200);
+  }, []);
+
   if (loadingAuth || (session?.user?.id && loadingProfile)) {
     return (
       <div className="min-h-screen bg-[#0f0f1e] flex items-center justify-center text-gray-300">
@@ -248,41 +292,11 @@ export default function App() {
     botProgressTimerRef.current = setTimeout(() => setBotProgress('joining'), 1500);
   };
 
-  const handleEndSession = useCallback(async () => {
-    if (botProgressTimerRef.current) { clearTimeout(botProgressTimerRef.current); botProgressTimerRef.current = null; }
-    // Stop session via API so bot leaves meeting (works from any screen).
-    // Note: DashboardScreen.handleEndSession calls leave+stop itself before invoking this,
-    // so only make API calls if coming from a non-dashboard screen.
-    if (activeSessionId && currentScreen !== 'dashboard') {
-      try {
-        await authFetch(`/api/sessions/${activeSessionId}/leave`, { method: 'POST' }).catch(() => {});
-        await authFetch(`/api/sessions/${activeSessionId}/stop`, { method: 'POST' });
-      } catch {
-        // Best-effort — still clear local state
-      }
-    }
-    setActiveSessionId(null);
-    setActiveMeetingTitle(null);
-    setActiveMeetingType(null);
-  }, [activeSessionId, currentScreen]);
-
   const handleNewSession = () => {
     setCurrentScreen('sessions');
     // Increment flag to trigger dialog open in SessionsScreen
     setOpenNewSessionFlag((f) => f + 1);
   };
-
-  const handleBotConnected = useCallback(() => {
-    // I7: Guard against stale callback firing after overlay dismissed
-    if (!botConnectingRef.current) return;
-    setBotProgress('streaming');
-    if (botProgressTimerRef.current) { clearTimeout(botProgressTimerRef.current); }
-    botProgressTimerRef.current = setTimeout(() => {
-      setBotConnecting(false);
-      setBotProgress(null);
-      botProgressTimerRef.current = null;
-    }, 1200);
-  }, []);
 
   return (
     <WebSocketProvider sessionId={activeSessionId}>

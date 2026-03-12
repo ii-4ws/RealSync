@@ -8,7 +8,6 @@ import { useNotifications, type NotificationSeverity } from '../../contexts/Noti
 const CATEGORY_FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'deepfake', label: 'Deepfake' },
-  { key: 'identity', label: 'Identity' },
   { key: 'emotion', label: 'Emotion' },
   { key: 'altercation', label: 'Threat' },
   { key: 'fraud', label: 'Fraud' },

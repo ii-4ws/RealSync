@@ -92,7 +92,6 @@ function generateSuggestions({
   const text = normalize(transcriptText);
 
   const deepfakeRisk = metrics?.deepfake?.riskLevel || "low";
-  const identityShift = Number(metrics?.identity?.embeddingShift || 0);
 
   const canEmit = (ruleId, cooldownMs = 60_000) => {
     const last = fired.get(ruleId) || 0;
@@ -111,20 +110,6 @@ function generateSuggestions({
         severity: "high",
         title: "Verify Before Acting",
         message: "Visual risk + money keywords detected. Verify the speaker via a secondary channel before any transfer.",
-      })
-    );
-  }
-
-  if (
-    meetingTypeSelected === "official" &&
-    identityShift > 0.25 &&
-    canEmit("identity_drift_official", 45_000)
-  ) {
-    suggestions.push(
-      buildSuggestion({
-        severity: "medium",
-        title: "Run a Quick Liveness Check",
-        message: "Identity drift rising during an official meeting. Ask the participant to reposition the camera and repeat a random phrase.",
       })
     );
   }

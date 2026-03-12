@@ -26,7 +26,7 @@ const log = require("../lib/logger");
 
 const DEFAULT_DISPLAY_NAME = "RealSync Bot";
 const PUPPETEER_TIMEOUT_MS = 120_000; // I5: 120s to get into the meeting (Puppeteer+Zoom can take >60s)
-const FRAME_INTERVAL_MS = 2000; // 1 frame every 2s (0.5 FPS)
+const FRAME_INTERVAL_MS = 1500; // 1 frame every 1.5s (~0.67 FPS)
 const CAPTION_POLL_MS = 1000; // check captions every 1s
 const AUDIO_CHUNK_MS = 500; // send audio chunks every 500ms
 const VIEWPORT = { width: 1920, height: 1080 };
@@ -134,6 +134,22 @@ class ZoomBotAdapter {
       });
 
       this.page = await this.browser.newPage();
+
+      // Detect unexpected page close/crash so ingest WS closes and backend auto-ends session
+      this.page.on("close", () => {
+        if (!this._stopped) {
+          log.warn("zoomBot", "Puppeteer page closed unexpectedly");
+          this._stopped = true;
+          this._cleanup();
+        }
+      });
+      this.page.on("error", (err) => {
+        log.error("zoomBot", `Puppeteer page error: ${err.message}`);
+        if (!this._stopped) {
+          this._stopped = true;
+          this._cleanup();
+        }
+      });
 
       // Set user agent to look like a normal Chrome browser
       await this.page.setUserAgent(
@@ -1162,6 +1178,117 @@ class ZoomBotAdapter {
           }).catch(() => {});
         }
 
+        // One-time DOM dump to discover Zoom's CSS class names for speaker detection
+        if (!this._domDumped) {
+          this._domDumped = true;
+          const domInfo = await this.page.evaluate(() => {
+            const matches = [];
+            for (const el of document.querySelectorAll("*")) {
+              const cls = el.className?.toString() || "";
+              if (cls.match(/name|speaker|avatar|video-info|footer/i)) {
+                const rect = el.getBoundingClientRect();
+                if (rect.width === 0 && rect.height === 0) continue;
+                matches.push({
+                  tag: el.tagName,
+                  cls: cls.slice(0, 200),
+                  text: (el.textContent || "").trim().slice(0, 50),
+                  rect: { x: Math.round(rect.x), y: Math.round(rect.y) },
+                });
+              }
+            }
+            return matches;
+          }).catch(() => []);
+          if (domInfo.length > 0) {
+            log.info("zoomBot", `DOM dump (speaker/name elements): ${JSON.stringify(domInfo)}`);
+          }
+        }
+
+        // Detect active speaker from Zoom DOM before capturing the frame
+        const activeSpeaker = await this.page.evaluate((myName) => {
+          const myLower = myName.toLowerCase();
+
+          // Helper: extract participant name from a container element
+          function extractName(container) {
+            // Try specific name selectors first, then fall back to text content
+            const selectors = [
+              '.video-avatar__avatar-footer',
+              '[class*="display-name"]',
+              '[class*="attendee-name"]',
+              '[class*="avatar-name"]',
+            ];
+            for (const sel of selectors) {
+              const el = container.querySelector(sel);
+              if (el) {
+                const name = el.textContent?.trim();
+                if (name && name.length > 1 && name.length < 50 && name.toLowerCase() !== myLower) {
+                  return name;
+                }
+              }
+            }
+            return null;
+          }
+
+          // Strategy 1 (primary): Zoom's active speaker large view
+          // The speaker-active-container__video-frame holds the main/active speaker
+          const activeFrame = document.querySelector('.speaker-active-container__video-frame');
+          if (activeFrame) {
+            const name = extractName(activeFrame);
+            if (name) return name;
+          }
+
+          // Strategy 2: Zoom's speaker bar active tile (has --active suffix)
+          const activeTile = document.querySelector('.speaker-bar-container__video-frame--active');
+          if (activeTile) {
+            const name = extractName(activeTile);
+            if (name) return name;
+          }
+
+          // Strategy 3: Generic speaking indicators (for other Zoom layouts/versions)
+          const speakingSelectors = [
+            '[class*="speaking"]:not([class*="non-speaking"])',
+            '[class*="active-speaker"]',
+            '[class*="active_speaker"]',
+            '[aria-label*="speaking" i]',
+          ];
+          for (const sel of speakingSelectors) {
+            const tiles = document.querySelectorAll(sel);
+            for (const tile of tiles) {
+              const name = extractName(tile) || tile.textContent?.trim();
+              if (name && name.length > 1 && name.length < 50 && name.toLowerCase() !== myLower) {
+                return name;
+              }
+              const parent = tile.closest('[class*="video"], [class*="participant"], [class*="tile"]');
+              if (parent) {
+                const parentName = extractName(parent);
+                if (parentName) return parentName;
+              }
+            }
+          }
+
+          // Strategy 4 (last resort): Name in the largest video area by Y position
+          const nameSelectors = [
+            '[class*="display-name"]',
+            '[class*="video-avatar"] [class*="name"]',
+            '[class*="avatar-footer"] [class*="name"]',
+          ];
+          let speaker = null;
+          let bestY = 0;
+          for (const sel of nameSelectors) {
+            const elements = document.querySelectorAll(sel);
+            for (const el of elements) {
+              const rect = el.getBoundingClientRect();
+              if (rect.width === 0 || rect.height === 0) continue;
+              const name = el.textContent?.trim();
+              if (!name || name.length > 50 || name.toLowerCase() === myLower) continue;
+              if (rect.y > 200 && rect.y > bestY) {
+                bestY = rect.y;
+                speaker = name;
+              }
+            }
+          }
+          return speaker || null;
+        }, this.displayName || "RealSync Bot").catch(() => null);
+
         const screenshot = await this.page.screenshot({
           encoding: "base64",
           type: "jpeg",
@@ -1171,6 +1298,7 @@ class ZoomBotAdapter {
         this.onIngestMessage({
           type: "frame",
           dataB64: screenshot,
+          activeSpeaker: activeSpeaker || null,
           width: VIEWPORT.width,
           height: VIEWPORT.height,
           capturedAt: new Date().toISOString(),
@@ -1303,13 +1431,22 @@ class ZoomBotAdapter {
         });
 
         if (!names || names.length === 0) return;
-        const namesKey = names.join("|");
+
+        // Filter out the bot's own name so it never appears in participant list
+        const botName = (this.displayName || "RealSync Bot").toLowerCase();
+        const filtered = names.filter((n) => {
+          const lower = n.toLowerCase();
+          return lower !== botName && !lower.includes("realsync bot");
+        });
+        if (filtered.length === 0) return;
+
+        const namesKey = filtered.join("|");
         if (namesKey === this._lastParticipantNames.join("|")) return;
 
-        this._lastParticipantNames = names;
+        this._lastParticipantNames = filtered;
         this.onIngestMessage({
           type: "participants",
-          names,
+          names: filtered,
           participants: names.map((name) => ({ name })),
           ts: new Date().toISOString(),
         });
@@ -1539,6 +1676,55 @@ class ZoomBotAdapter {
       log.warn("zoomBot", `Failed to inject audio capture: ${err.message}`);
       this._audioCapturing = false;
     }
+
+    // PulseAudio fallback: capture system audio via parec
+    try {
+      const { spawn } = require("child_process");
+      const monitorSource = "alsa_output.pci-0000_04_00.6.analog-stereo.monitor";
+      this._parecProc = spawn("parec", [
+        "--device=" + monitorSource,
+        "--rate=16000", "--channels=1", "--format=s16le", "--raw"
+      ]);
+
+      let pcmBuffer = Buffer.alloc(0);
+      const CHUNK_BYTES = 16000; // 500ms at 16kHz mono PCM16 = 16000 bytes
+
+      this._parecProc.stdout.on("data", (data) => {
+        pcmBuffer = Buffer.concat([pcmBuffer, data]);
+        while (pcmBuffer.length >= CHUNK_BYTES) {
+          const chunk = pcmBuffer.subarray(0, CHUNK_BYTES);
+          pcmBuffer = pcmBuffer.subarray(CHUNK_BYTES);
+          this.onIngestMessage({
+            type: "audio_pcm",
+            sampleRate: 16000,
+            channels: 1,
+            dataB64: chunk.toString("base64"),
+            sourceParticipant: "meeting_audio",
+          });
+        }
+      });
+
+      this._parecProc.stderr.on("data", (data) => {
+        const msg = data.toString().trim();
+        if (msg) log.warn("zoomBot", `parec stderr: ${msg}`);
+      });
+
+      this._parecProc.on("error", (err) => {
+        log.warn("zoomBot", `parec failed: ${err.message} — audio capture via PulseAudio unavailable`);
+        this._parecProc = null;
+      });
+
+      this._parecProc.on("exit", (code) => {
+        if (code !== null && code !== 0) {
+          log.warn("zoomBot", `parec exited with code ${code}`);
+        }
+        this._parecProc = null;
+      });
+
+      log.info("zoomBot", "Audio capture started (PulseAudio loopback via parec).");
+    } catch (err) {
+      log.warn("zoomBot", `PulseAudio audio capture failed: ${err.message}`);
+    }
   }
 
   /**
@@ -1581,6 +1767,12 @@ class ZoomBotAdapter {
       this._participantInterval = null;
     }
     this._audioCapturing = false;
+
+    // Kill parec if running
+    if (this._parecProc) {
+      this._parecProc.kill();
+      this._parecProc = null;
+    }
 
     // Try to click "Leave Meeting" in Zoom (best-effort, don't wait long)
     try {

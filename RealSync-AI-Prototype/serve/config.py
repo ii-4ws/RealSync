@@ -30,41 +30,30 @@ FACE_CONFIDENCE_THRESHOLD = 0.4
 FACE_PADDING_PERCENT = 0.3
 FACE_CROP_SIZE = 224  # pixels
 
-# Identity tracking — FaceNet InceptionResnetV1
-FACENET_INPUT_SIZE = 160  # pixels, required by InceptionResnetV1
-FACENET_PRETRAINED = 'vggface2'  # pretrained weights dataset
-IDENTITY_SHIFT_LOW = 0.30  # below this = low risk (was 0.20; 30-deg head turn = 0.15-0.25)
-IDENTITY_SHIFT_HIGH = 0.50  # above this = high risk (was 0.40; only flag extreme drift)
-
 # Temporal analysis
 TEMPORAL_WINDOW_SIZE = 30
-TEMPORAL_TRUST_DROP_THRESHOLD = 0.30   # was 0.20; Zoom jitter causes 0.15-0.25 fluctuations
-TEMPORAL_IDENTITY_SWITCH_LOW = 0.25    # was 0.15; avg must be firmly same-person before switch is suspicious
-TEMPORAL_IDENTITY_SWITCH_HIGH = 0.50   # was 0.35; requires genuinely high shift to trigger
+TEMPORAL_TRUST_DROP_THRESHOLD = 0.40   # was 0.30; head movements cause 15-25% fluctuation, require 40% for real alert
 TEMPORAL_EMOTION_CHANGE_THRESHOLD = 10 # was 5; normal conversation = 5-8 emotion changes per 30 frames
 
 # Deepfake thresholds (H9: renamed for clarity)
 DEEPFAKE_AUTH_THRESHOLD_LOW_RISK = 0.70   # above → low risk
-DEEPFAKE_AUTH_THRESHOLD_HIGH_RISK = 0.45  # below → high risk
+DEEPFAKE_AUTH_THRESHOLD_HIGH_RISK = 0.40  # below → high risk (real faces now score ≥0.55)
 
 # Emotion thresholds
 EMOTION_LABELS = ["Happy", "Neutral", "Angry", "Fear", "Surprise", "Sad"]
 
-# --- Session & Identity ---
+# --- Session ---
 SESSION_TTL_SECONDS = 3600
-IDENTITY_SAME_PERSON_THRESHOLD = 0.35  # was 0.25; head turn to 0.25 shouldn't flag "different person"
-IDENTITY_EMA_ALPHA = 0.05              # was 0.1; slower baseline drift, transient movements don't shift permanently
 SESSION_EVICTION_TRIGGER = 50
 
 # --- Temporal Analysis ---
-TEMPORAL_EWMA_DECAY = 0.85
+TEMPORAL_EWMA_DECAY = 0.90  # was 0.85; slower decay = smoother scores, fewer single-frame spikes
 TEMPORAL_TREND_THRESHOLD = 0.05
 TEMPORAL_SMOOTHING_MIN_FRAMES = 2
 
 # --- Trust Score Weights ---
-TRUST_WEIGHT_VIDEO = 0.47
-TRUST_WEIGHT_IDENTITY = 0.33
-TRUST_WEIGHT_BEHAVIOR = 0.20
+TRUST_WEIGHT_VIDEO = 0.55
+TRUST_WEIGHT_BEHAVIOR = 0.45
 BEHAVIOR_BASELINE_SCALE = 0.5
 
 # --- No-Face Detection ---

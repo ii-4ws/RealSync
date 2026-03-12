@@ -4,7 +4,6 @@ mediapipe==0.10.18
 torch==2.4.1
 torchvision==0.19.1
 torchaudio==2.4.1
-facenet-pytorch==2.6.0
 scikit-learn==1.5.2
 transformers==4.44.2
 sentencepiece==0.2.0

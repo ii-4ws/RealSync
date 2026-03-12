@@ -161,13 +161,9 @@ function deriveSeverity(fusedScore) {
 function getVisualRiskBoost(metrics) {
   let boost = 0;
   const deepfakeRisk = metrics?.deepfake?.riskLevel || "low";
-  const identityRisk = metrics?.identity?.riskLevel || "low";
 
   if (deepfakeRisk === "high") boost += 0.5;
   else if (deepfakeRisk === "medium") boost += 0.25;
-
-  if (identityRisk === "high") boost += 0.3;
-  else if (identityRisk === "medium") boost += 0.15;
 
   return boost;
 }
@@ -276,14 +272,11 @@ class FraudDetector {
     if (!behavioralSignals?.signals?.length) return alerts;
 
     const deepfakeRisk = sessionMetrics?.deepfake?.riskLevel || "low";
-    const identityRisk = sessionMetrics?.identity?.riskLevel || "low";
 
     // Visual risk boost (same formula as keyword detection)
     let visualBoost = 0;
     if (deepfakeRisk === "high") visualBoost += 0.5;
     else if (deepfakeRisk === "medium") visualBoost += 0.25;
-    if (identityRisk === "high") visualBoost += 0.3;
-    else if (identityRisk === "medium") visualBoost += 0.15;
 
     // Category mapping for alert system
     const categoryMap = {

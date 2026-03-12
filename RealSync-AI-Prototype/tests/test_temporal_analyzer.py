@@ -4,8 +4,6 @@ import pytest
 from serve.temporal_analyzer import TemporalAnalyzer
 from serve.config import (
     TEMPORAL_TRUST_DROP_THRESHOLD,
-    TEMPORAL_IDENTITY_SWITCH_LOW,
-    TEMPORAL_IDENTITY_SWITCH_HIGH,
     TEMPORAL_EMOTION_CHANGE_THRESHOLD,
     TEMPORAL_EWMA_DECAY,
 )
@@ -19,11 +17,10 @@ def analyzer():
     a.clear_all()
 
 
-def _frame(trust=0.85, auth=0.85, shift=0.1, emotion="Neutral"):
+def _frame(trust=0.85, auth=0.85, emotion="Neutral"):
     return {
         "trustScore": trust,
         "authenticityScore": auth,
-        "embeddingShift": shift,
         "emotionLabel": emotion,
     }
 
@@ -93,14 +90,6 @@ class TestAnomalyDetection:
         result = analyzer.record_frame("s1", _frame(trust=0.50))
         anomaly_types = [a["type"] for a in result["anomalies"]]
         assert "sudden_trust_drop" in anomaly_types
-
-    def test_identity_switch(self, analyzer):
-        """AI-TP-04: Identity switch anomaly detected."""
-        for _ in range(5):
-            analyzer.record_frame("s1", _frame(shift=0.05))
-        result = analyzer.record_frame("s1", _frame(shift=0.50))
-        anomaly_types = [a["type"] for a in result["anomalies"]]
-        assert "identity_switch" in anomaly_types
 
     def test_emotion_instability(self, analyzer):
         """AI-TP-05: Emotion instability with 5+ changes."""

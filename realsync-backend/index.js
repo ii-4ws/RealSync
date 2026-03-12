@@ -16,7 +16,7 @@ if (process.env.NODE_ENV === "production" && (!process.env.SUPABASE_URL || !proc
 
 const { createSttStream } = require("./lib/gcpStt");
 const { MEETING_TYPES, generateSuggestions } = require("./lib/suggestions");
-const { analyzeFrame, analyzeAudio, analyzeText, checkHealth: checkAiHealth, clearSession: clearAiSession } = require("./lib/aiClient");
+const { analyzeFrame, analyzeAudio, analyzeText, transcribeAudio, checkHealth: checkAiHealth } = require("./lib/aiClient");
 const { AlertFusionEngine } = require("./lib/alertFusion");
 const { FraudDetector } = require("./lib/fraudDetector");
 const persistence = require("./lib/persistence");
@@ -119,7 +119,7 @@ const PORT = process.env.PORT || 4000;
 
 const BEHAVIORAL_ANALYSIS_INTERVAL_MS = 15_000;
 const MAX_AUDIO_BUFFER_CHUNKS = 128;
-const AUDIO_ANALYSIS_INTERVAL_MS = 4_000;
+const AUDIO_ANALYSIS_INTERVAL_MS = 3_000;
 const AUDIO_DEEPFAKE_ENABLED = process.env.AUDIO_DEEPFAKE_ENABLED !== "false";
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -179,16 +179,12 @@ const generateSimulatedMetrics = () => {
   const emotionLabel = EMOTIONS[dominantIndex];
   const emotionConfidence = scores[emotionLabel];
 
-  const embeddingShift = clamp(0.08 + 0.35 * wave(6, 2.1), 0.03, 0.65);
-  const identityRisk =
-    embeddingShift < 0.2 ? "low" : embeddingShift < 0.4 ? "medium" : "high";
-
   const authenticityScore = clamp(0.82 + 0.16 * wave(8, 0.7), 0.55, 0.98);
   const deepfakeRisk =
     authenticityScore > 0.85 ? "low" : authenticityScore > 0.7 ? "medium" : "high";
 
   const audioConfidence = clamp(0.9 + 0.08 * wave(5, 0.4), 0.7, 0.99);
-  const videoConfidence = clamp(1 - embeddingShift + 0.03 * wave(4, 1.1), 0.6, 0.99);
+  const videoConfidence = clamp(authenticityScore + 0.03 * wave(4, 1.1), 0.6, 0.99);
   const behaviorConfidence = clamp(0.55 + emotionConfidence * 0.4, 0.5, 0.95);
 
   const trustScore = clamp(
@@ -204,11 +200,6 @@ const generateSimulatedMetrics = () => {
       label: emotionLabel,
       confidence: toFixedNumber(emotionConfidence),
       scores,
-    },
-    identity: {
-      samePerson: embeddingShift < 0.25,
-      embeddingShift: toFixedNumber(embeddingShift),
-      riskLevel: identityRisk,
     },
     deepfake: {
       authenticityScore: toFixedNumber(authenticityScore),
@@ -231,8 +222,6 @@ const deriveMetrics = (payload) => {
       : "Neutral";
   const emotionConfidence =
     typeof payload?.emotion?.confidence === "number" ? payload.emotion.confidence : 0.5;
-  const embeddingShift =
-    typeof payload?.identity?.embeddingShift === "number" ? payload.identity.embeddingShift : 0.3;
   const authenticityScore =
     typeof payload?.deepfake?.authenticityScore === "number"
       ? payload.deepfake.authenticityScore
@@ -248,7 +237,7 @@ const deriveMetrics = (payload) => {
   const rawLayers = payload.confidenceLayers ?? {};
   const confidenceLayers = {
     audio: typeof rawLayers.audio === "number" ? rawLayers.audio : null,
-    video: typeof rawLayers.video === "number" ? rawLayers.video : clamp(1 - embeddingShift, 0, 1),
+    video: typeof rawLayers.video === "number" ? rawLayers.video : authenticityScore,
     behavior: typeof rawLayers.behavior === "number" ? rawLayers.behavior : clamp(0.5 + emotionConfidence * 0.5, 0, 1),
   };
 
@@ -316,6 +305,9 @@ const createSession = ({ title, meetingType, meetingUrl = null, userId = null })
     alerts: [],
     // Participant registry: faceId → { name, firstSeen }
     participants: new Map(),
+    // Active speaker tracking
+    botDisplayName: "RealSync Bot",
+    lastActiveSpeaker: null,
   };
 
   sessions.set(id, session);
@@ -694,7 +686,49 @@ wssIngest.on("connection", async (socket, req) => {
   }
   session._ingestSocket = socket;
   socket.on("close", () => {
-    if (session._ingestSocket === socket) session._ingestSocket = null;
+    if (session._ingestSocket !== socket) return;
+    session._ingestSocket = null;
+
+    // Only act if session is still active (not already ended by user)
+    if (session.endedAt) return;
+
+    log.info("server", `Bot ingest socket closed for session ${session.id} — auto-ending session`);
+
+    // Update bot status
+    session.botStatus = "disconnected";
+    session.botStreams = { audio: false, video: false, captions: false };
+
+    // Broadcast status change
+    broadcastToSession(session.id, {
+      type: "sourceStatus",
+      status: "disconnected",
+      streams: session.botStreams,
+      ts: makeIso(),
+    });
+
+    // Push alert notification
+    const alertPayload = {
+      type: "alert",
+      alertId: `bot-disconnected-${Date.now()}`,
+      severity: "high",
+      category: "system",
+      title: "Bot Disconnected",
+      message: "The RealSync bot was disconnected from the Zoom meeting. The session has been automatically ended.",
+      recommendation: "Start a new session if the meeting is still ongoing.",
+      ts: makeIso(),
+    };
+    broadcastToSession(session.id, alertPayload);
+    session.alerts.push(alertPayload);
+
+    // Auto-end the session
+    session.endedAt = makeIso();
+    session.stt?.end?.();
+    persistence.endSession(session.id).catch((err) => {
+      log.warn("persistence", `endSession failed: ${err?.message ?? err}`);
+    });
+    persistence.generateReport(session.id).catch((err) => {
+      log.warn("persistence", `generateReport failed: ${err?.message ?? err}`);
+    });
   });
 
   // Ingest WS rate limiting: max 500 messages per 10-second window
@@ -767,8 +801,9 @@ wssIngest.on("connection", async (socket, req) => {
         // 7.12: Only splice 8 chunks at a time to prevent silent data loss
         // when audio accumulates faster than analysis can process it.
         const chunks = session.audioAnalysisBuffer.splice(0, 8);
+        const combinedAudioB64 = combineAudioChunks(chunks);
         session.lastAudioAnalysisAt = now;
-        analyzeAudio({ sessionId: session.id, audioB64: combineAudioChunks(chunks), durationMs: 4000 })
+        analyzeAudio({ sessionId: session.id, audioB64: combinedAudioB64, durationMs: 4000 })
           .then((res) => {
             session.audioAnalysisInFlight = false;
             if (res?.audio?.authenticityScore != null) {
@@ -780,13 +815,12 @@ wssIngest.on("connection", async (socket, req) => {
               // Fix 2: Recompute trust and broadcast so frontend sees audio updates
               if (session.metrics?.trustScore != null) {
                 const behaviorConf = session.metrics.confidenceLayers?.behavior || 0.55;
-                const identityShift = session.metrics.identity?.embeddingShift || 0;
-                const identitySignal = 1.0 - identityShift;
                 const videoSignal = session.metrics.confidenceLayers?.video ?? 0.5;
                 const audioScore = res.audio.authenticityScore;
-                const finalTrust = 0.35 * videoSignal + 0.25 * audioScore + 0.25 * identitySignal + 0.15 * behaviorConf;
+                const finalTrust = 0.45 * videoSignal + 0.35 * audioScore + 0.20 * behaviorConf;
                 session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));
               }
+              session.metrics.timestamp = makeIso();
               broadcastToSession(session.id, { type: "metrics", data: session.metrics });
             }
           })
@@ -794,6 +828,20 @@ wssIngest.on("connection", async (socket, req) => {
             session.audioAnalysisInFlight = false;
             log.error("server", `audio-analysis error: ${err.message}`);
           });
+        // Whisper transcription — runs in parallel with audio deepfake analysis
+        transcribeAudio({ sessionId: session.id, audioB64: combinedAudioB64, durationMs: 4000 })
+          .then((res) => {
+            if (res?.transcript?.text) {
+              handleTranscript(session, {
+                text: res.transcript.text,
+                isFinal: true,
+                confidence: 0.9,
+                ts: res.processedAt || new Date().toISOString(),
+                source: "whisper",
+              });
+            }
+          })
+          .catch(() => {});
       }
       return;
     }
@@ -930,24 +978,47 @@ async function handleFrame(session, message) {
     if (session.endedAt) return;
     if (!result || !result.aggregated) return;
 
+    // Update analyzed participant before early returns so it stays current even when camera is off
+    if (message.activeSpeaker) {
+      session.lastActiveSpeaker = message.activeSpeaker;
+    }
+    const primaryName = message.activeSpeaker
+      || session.lastActiveSpeaker
+      || Array.from(session.participants.values())
+           .find((p) => p.name !== session.botDisplayName)?.name
+      || session.participants?.get(0)?.name
+      || null;
+    session.metrics.analyzedParticipant = primaryName;
+
     // Camera-off mode: must be checked BEFORE noFaceDetected, since camera-off
     // also triggers noFaceDetected but needs special audio-only trust handling.
     if (result?.aggregated?.cameraOff === true) {
       session.metrics.cameraOff = true;
+      session.metrics.source = "external";
+      session.source = "external";
+      session.metrics.timestamp = result.processedAt || makeIso();
       session._faceRecoveryCount = 0;  // Reset hysteresis counter
       session.metrics.confidenceLayers = session.metrics.confidenceLayers || {};
       session.metrics.confidenceLayers.video = null;
+      session.metrics.confidenceLayers.behavior = null;
       const audioScore = session.audioAuthenticityScore;
-      const behaviorConf = result.aggregated.confidenceLayers?.behavior || 0.55;
       if (audioScore != null) {
-        session.metrics.trustScore = parseFloat((0.60 * audioScore + 0.40 * behaviorConf).toFixed(4));
+        session.metrics.trustScore = parseFloat((1.0 * audioScore).toFixed(4));
       }
       broadcastToSession(session.id, { type: "metrics", data: session.metrics });
       return;  // Skip visual alert evaluation
     }
 
-    // When no face is detected, preserve the last good metrics
-    if (result.aggregated.noFaceDetected) return;
+    // When no face is detected (but not camera-off), keep last visual metrics
+    // but update timestamp and source so dashboard stays alive
+    if (result.aggregated.noFaceDetected) {
+      session.metrics.source = "external";
+      session.source = "external";
+      session.metrics.timestamp = result.processedAt || makeIso();
+      session.metrics.cameraOff = false;
+      broadcastToSession(session.id, { type: "metrics", data: session.metrics });
+      return;
+    }
 
     // Update session metrics from AI response
     const isMock = result.source === "mock";
@@ -955,6 +1026,7 @@ async function handleFrame(session, message) {
       ...result.aggregated,
       timestamp: result.processedAt || makeIso(),
       source: isMock ? "simulated" : "external",
+      analyzedParticipant: primaryName,
     };
     session.source = isMock ? "simulated" : "external";
 
@@ -990,10 +1062,6 @@ async function handleFrame(session, message) {
       session.metrics.cameraOff = false;
       session._faceRecoveryCount = 0;
     }
-
-    // Include which participant's face is being analyzed in the metrics
-    const primaryName = session.participants?.get(0)?.name || null;
-    session.metrics.analyzedParticipant = primaryName;
 
     // Evaluate visual alerts — primary face (face 0 / aggregated)
     const visualAlerts = session.alertFusion.evaluateVisual(session, result, { faceId: 0, participantName: primaryName });
@@ -1044,26 +1112,20 @@ async function handleFrame(session, message) {
     if (result?.aggregated?.trustScore != null) {
       const audioScore = session.audioAuthenticityScore;
       const behaviorConf = result.aggregated.confidenceLayers?.behavior || 0.55;
-      const identityShift = result.aggregated.identity?.embeddingShift || 0;
-      // Dampen identity drift impact when multiple participants are detected
-      // (face switching between participants causes expected high drift)
-      // #19: Use result.faces.length directly — result.aggregated.faceCount is not set by AI service
-      const rawFaceCount = (Array.isArray(result.faces) ? result.faces.length : 0) || session.metrics?.faceCount || 1;
-      const identitySignal = rawFaceCount > 1 ? Math.max(0.7, 1.0 - identityShift) : 1.0 - identityShift;
 
       let finalTrust;
       if (AUDIO_DEEPFAKE_ENABLED && audioScore != null) {
-        // 4-signal weighted: video=0.35, audio=0.25, identity=0.25, behavior=0.15
+        // 3-signal weighted: video=0.45, audio=0.35, behavior=0.20
         const videoSignal = result.aggregated.deepfake?.authenticityScore ?? 0.5;
-        finalTrust = 0.35 * videoSignal + 0.25 * audioScore + 0.25 * identitySignal + 0.15 * behaviorConf;
+        finalTrust = 0.45 * videoSignal + 0.35 * audioScore + 0.20 * behaviorConf;
         session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));
       } else if (result.aggregated.trustScore != null) {
-        // Use AI service's pre-computed 3-signal trust score directly to avoid drift
+        // Use AI service's pre-computed trust score directly
         session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(result.aggregated.trustScore.toFixed(4))));
       } else {
-        // Fallback: 3-signal (no audio): video=0.47, identity=0.33, behavior=0.20
+        // Fallback: 2-signal (no audio): video=0.55, behavior=0.45
         const videoSignal = result.aggregated.deepfake?.authenticityScore ?? 0.5;
-        finalTrust = 0.47 * videoSignal + 0.33 * identitySignal + 0.20 * behaviorConf;
+        finalTrust = 0.55 * videoSignal + 0.45 * behaviorConf;
         session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));
       }
     }
@@ -1094,7 +1156,7 @@ const ensureBroadcastLoop = () => {
         data: session.metrics,
       });
     });
-  }, 2000);
+  }, 1500);
 };
 
 ensureBroadcastLoop();
@@ -1136,10 +1198,6 @@ app.get("/api/models", (req, res) => {
     models: {
       emotion: {
         name: "FER2013 / AffectNet CNN",
-        status: usingExternal ? "external" : "simulated",
-      },
-      identity: {
-        name: "FaceNet / InsightFace",
         status: usingExternal ? "external" : "simulated",
       },
       deepfake: {
@@ -1276,7 +1334,7 @@ app.post("/api/sessions/:id/metrics", requireSessionOwner(getSession, rehydrateS
     return res.status(400).json({ error: "Invalid payload." });
   }
 
-  const requiredFields = ["emotion", "identity", "deepfake"];
+  const requiredFields = ["emotion", "deepfake"];
   const missing = requiredFields.filter((field) => !payload[field]);
   if (missing.length > 0) {
     return res.status(400).json({
@@ -1307,11 +1365,6 @@ app.post("/api/sessions/:id/stop", requireSessionOwner(getSession, rehydrateSess
   // Stop bot if running
   botManager.stopBot(session.id);
   session.botStatus = "disconnected";
-
-  // Clean up AI service state (identity baselines, temporal buffers) — fire-and-forget
-  clearAiSession(session.id).catch((err) => {
-    log.warn("ai-cleanup", `AI session cleanup failed: ${err?.message ?? err}`);
-  });
 
   // Persist session end
   persistence.endSession(session.id).catch((err) => { log.warn("persistence", `operation failed: ${err?.message ?? err}`); });
@@ -1429,8 +1482,9 @@ function processIngestMessage(session, message) {
         // 7.12: Only splice 8 chunks at a time to prevent silent data loss
         // when audio accumulates faster than analysis can process it.
         const chunks = session.audioAnalysisBuffer.splice(0, 8);
+        const combinedAudioB64 = combineAudioChunks(chunks);
         session.lastAudioAnalysisAt = now;
-        analyzeAudio({ sessionId: session.id, audioB64: combineAudioChunks(chunks), durationMs: 4000 })
+        analyzeAudio({ sessionId: session.id, audioB64: combinedAudioB64, durationMs: 4000 })
           .then((res) => {
             session.audioAnalysisInFlight = false;
             if (res?.audio?.authenticityScore != null) {
@@ -1442,11 +1496,9 @@ function processIngestMessage(session, message) {
               // Recompute trust and broadcast for audio-via-REST path
               if (session.metrics?.trustScore != null) {
                 const behaviorConf = session.metrics.confidenceLayers?.behavior || 0.55;
-                const identityShift = session.metrics.identity?.embeddingShift || 0;
-                const identitySignal = 1.0 - identityShift;
                 const videoSignal = session.metrics.confidenceLayers?.video ?? 0.5;
                 const audioScore = res.audio.authenticityScore;
-                const finalTrust = 0.35 * videoSignal + 0.25 * audioScore + 0.25 * identitySignal + 0.15 * behaviorConf;
+                const finalTrust = 0.45 * videoSignal + 0.35 * audioScore + 0.20 * behaviorConf;
                 session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));
               }
               broadcastToSession(session.id, { type: "metrics", data: session.metrics });
@@ -1456,6 +1508,20 @@ function processIngestMessage(session, message) {
             session.audioAnalysisInFlight = false;
             log.warn("audio-analysis", `Audio analysis error for session ${session.id}: ${err?.message ?? err}`);
           });
+        // Whisper transcription — runs in parallel with audio deepfake analysis
+        transcribeAudio({ sessionId: session.id, audioB64: combinedAudioB64, durationMs: 4000 })
+          .then((res) => {
+            if (res?.transcript?.text) {
+              handleTranscript(session, {
+                text: res.transcript.text,
+                isFinal: true,
+                confidence: 0.9,
+                ts: res.processedAt || new Date().toISOString(),
+                source: "whisper",
+              });
+            }
+          })
+          .catch(() => {});
       }
     }
   }
@@ -1489,6 +1555,7 @@ app.post("/api/sessions/:id/join", requireSessionOwner(getSession, rehydrateSess
   session.meetingUrl = meetingUrl;
   session.botStatus = "joining";
   session.source = "external"; // prevent simulated metrics from overwriting real bot data
+  session.botDisplayName = displayName || "RealSync Bot";
 
   const result = botManager.startBot({
     sessionId: session.id,
@@ -1724,7 +1791,7 @@ app.post("/api/metrics", (req, res) => {
 
   const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : null;
 
-  const requiredFields = ["emotion", "identity", "deepfake"];
+  const requiredFields = ["emotion", "deepfake"];
   const missing = requiredFields.filter((field) => !payload[field]);
   if (missing.length > 0) {
     return res.status(400).json({

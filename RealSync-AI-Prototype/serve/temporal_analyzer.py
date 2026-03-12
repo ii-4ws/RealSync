@@ -18,8 +18,6 @@ from typing import Dict, List
 from serve.config import (
     TEMPORAL_WINDOW_SIZE,
     TEMPORAL_TRUST_DROP_THRESHOLD,
-    TEMPORAL_IDENTITY_SWITCH_LOW,
-    TEMPORAL_IDENTITY_SWITCH_HIGH,
     TEMPORAL_EMOTION_CHANGE_THRESHOLD,
     SESSION_TTL_SECONDS,
     TEMPORAL_EWMA_DECAY,
@@ -87,7 +85,6 @@ class TemporalAnalyzer:
             snapshot = {
                 "trustScore": frame_result["trustScore"],
                 "authenticityScore": frame_result["authenticityScore"],
-                "embeddingShift": frame_result["embeddingShift"],
                 "emotionLabel": frame_result["emotionLabel"],
                 "timestamp": time.time(),
             }
@@ -171,7 +168,6 @@ class TemporalAnalyzer:
             return anomalies
 
         scores = [s["trustScore"] for s in buf]
-        shifts = [s["embeddingShift"] for s in buf]
 
         # 1. Sudden trust drop: current trust > threshold below buffer mean
         buffer_mean = np.mean(scores[:-1])  # exclude current frame
@@ -182,17 +178,7 @@ class TemporalAnalyzer:
                 "severity": "high",
             })
 
-        # 2. Identity switch: embedding shift jumps from low avg to high current
-        if len(shifts) >= 4:
-            avg_shift = np.mean(shifts[:-1])
-            if avg_shift < TEMPORAL_IDENTITY_SWITCH_LOW and current["embeddingShift"] > TEMPORAL_IDENTITY_SWITCH_HIGH:
-                anomalies.append({
-                    "type": "identity_switch",
-                    "description": f"Embedding shift jumped from avg {avg_shift:.3f} to {current['embeddingShift']:.3f}",
-                    "severity": "high",
-                })
-
-        # 3. Emotion instability: dominant emotion changed too many times in window
+        # 2. Emotion instability: dominant emotion changed too many times in window
         emotions = [s["emotionLabel"] for s in buf]
         if len(emotions) >= 5:
             changes = sum(1 for i in range(1, len(emotions)) if emotions[i] != emotions[i - 1])

@@ -12,12 +12,6 @@ const RECOMMENDATIONS = {
     medium: "Minor visual anomalies detected. Monitor the participant and consider asking them to toggle their camera.",
     low: "Slight visual irregularity noted. Likely benign, but stay aware.",
   },
-  identity: {
-    critical: "The participant's face has changed significantly. Stop sharing sensitive information and verify their identity immediately.",
-    high: "Significant face drift detected. Ask the participant to confirm their identity before continuing.",
-    medium: "Consider asking the participant to confirm their identity. Moderate face drift observed.",
-    low: "Minor identity drift detected. Likely caused by lighting or camera changes.",
-  },
   fraud: {
     critical: "Active financial fraud attempt detected. Do not make any payments or transfers. End the meeting and report through official channels.",
     high: "Do not make any payments or share financial details. Verify all requests through official channels outside this meeting.",

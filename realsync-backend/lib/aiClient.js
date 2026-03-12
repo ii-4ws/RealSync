@@ -35,10 +35,6 @@ function generateMockResponse(sessionId, capturedAt) {
   const deepfakeRisk =
     authenticityScore > 0.85 ? "low" : authenticityScore > 0.7 ? "medium" : "high";
 
-  const embeddingShift = randBetween(0.03, 0.45);
-  const identityRisk =
-    embeddingShift < 0.2 ? "low" : embeddingShift < 0.4 ? "medium" : "high";
-
   const face = {
     faceId: 0,
     bbox: { x: 100, y: 50, w: 200, h: 200 },
@@ -47,11 +43,6 @@ function generateMockResponse(sessionId, capturedAt) {
       label: emotionLabel,
       confidence: scores[emotionLabel],
       scores,
-    },
-    identity: {
-      embeddingShift,
-      samePerson: embeddingShift < 0.25,
-      riskLevel: identityRisk,
     },
     deepfake: {
       authenticityScore,
@@ -65,10 +56,9 @@ function generateMockResponse(sessionId, capturedAt) {
     (0.5 * (1.0 + scores[emotionLabel])).toFixed(4)
   );
   const audioConf = null; // No audio in mock — don't fabricate a signal
-  // Trust score: 3-signal weighted formula matching AI service (video=0.47, identity=0.33, behavior=0.20)
-  const identitySignal = 1 - embeddingShift;
+  // Trust score: 2-signal weighted formula matching AI service (video=0.55, behavior=0.45)
   const trustScore = Number(
-    (0.47 * authenticityScore + 0.33 * identitySignal + 0.20 * behaviorConf).toFixed(4)
+    (0.55 * authenticityScore + 0.45 * behaviorConf).toFixed(4)
   );
 
   return {
@@ -79,7 +69,6 @@ function generateMockResponse(sessionId, capturedAt) {
     faces: [face],
     aggregated: {
       emotion: face.emotion,
-      identity: face.identity,
       deepfake: face.deepfake,
       trustScore,
       confidenceLayers: {
@@ -141,8 +130,18 @@ async function analyzeFrame({ sessionId, frameB64, capturedAt }) {
 
     if (!res.ok) {
       if (res.status === 429) {
-        // AI service is busy processing another frame — skip this one silently
-        log.debug("aiClient", "AI service busy (429) — skipping frame");
+        // AI service is busy — wait briefly and retry once
+        log.debug("aiClient", "AI service busy (429) — retrying in 1.5s");
+        await new Promise((r) => setTimeout(r, 1500));
+        try {
+          const retryRes = await fetchImpl(`${AI_SERVICE_URL}/api/analyze/frame`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ sessionId, frameB64, capturedAt }),
+            signal: controller.signal,
+          });
+          if (retryRes.ok) return await retryRes.json();
+        } catch (_) { /* retry failed — give up */ }
         return null;
       }
       log.error("aiClient", `AI service responded ${res.status} — returning mock. Start AI service on ${AI_SERVICE_URL}`);
@@ -306,33 +305,40 @@ async function analyzeText({ sessionId, text }) {
 }
 
 /**
- * Tell the AI service to clear identity baselines, temporal buffers, and
- * no-face counters for a session.  Fire-and-forget; failures are logged
- * but never propagate.
+ * POST audio to the AI Inference Service for Whisper transcription.
  *
- * @param {string} sessionId
+ * @param {{ sessionId: string, audioB64: string, durationMs?: number }} payload
+ * @returns {Promise<object|null>} Transcription result or null on failure
  */
-async function clearSession(sessionId) {
+async function transcribeAudio({ sessionId, audioB64, durationMs }) {
   const fetchImpl = await getFetch();
-  if (!fetchImpl) return;
+  if (!fetchImpl) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS);
 
   try {
     const headers = { "Content-Type": "application/json" };
     if (AI_API_KEY) headers["X-API-Key"] = AI_API_KEY;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    try {
-      await fetchImpl(`${AI_SERVICE_URL}/api/sessions/${sessionId}/clear-identity`, {
-        method: "POST",
-        headers,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
+    const res = await fetchImpl(`${AI_SERVICE_URL}/api/transcribe`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ sessionId, audioB64, durationMs }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      log.warn("aiClient", `Whisper transcribe responded ${res.status}`);
+      return null;
     }
+
+    return await res.json();
   } catch (err) {
-    log.warn("aiClient", `clearSession(${sessionId}) failed: ${err?.message ?? err}`);
+    // Silent failure — transcription is supplementary
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -340,8 +346,8 @@ module.exports = {
   analyzeFrame,
   analyzeAudio,
   analyzeText,
+  transcribeAudio,
   checkHealth,
-  clearSession,
   // Exposed for testing
   _generateMockResponse: generateMockResponse,
 };

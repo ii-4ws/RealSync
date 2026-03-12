@@ -34,7 +34,6 @@ from serve.config import (
     FACE_CROP_SIZE,
     EMOTION_LABELS,
     TRUST_WEIGHT_VIDEO,
-    TRUST_WEIGHT_IDENTITY,
     TRUST_WEIGHT_BEHAVIOR,
     BEHAVIOR_BASELINE_SCALE,
     NO_FACE_THRESHOLD,
@@ -42,7 +41,6 @@ from serve.config import (
     NO_FACE_EVICT_BATCH,
     TEMPORAL_SMOOTHING_MIN_FRAMES,
 )
-from serve.identity_tracker import IdentityTracker
 from serve.temporal_analyzer import TemporalAnalyzer
 from serve.emotion_model import predict_emotion, get_emotion_model
 from serve.deepfake_model import predict_deepfake, get_deepfake_model
@@ -55,7 +53,6 @@ from serve.deepfake_model import predict_deepfake, get_deepfake_model
 # I2: Module-level thread pool — avoids creating/destroying threads per face
 _inference_pool = ThreadPoolExecutor(max_workers=3)
 
-_identity_tracker = IdentityTracker()
 _temporal_analyzer = TemporalAnalyzer(window_size=15)
 
 # Camera-off tracking: consecutive no-face frames per session
@@ -100,21 +97,15 @@ def _get_face_detector():
     return getattr(_thread_local, "face_detector", None) or None
 
 
-def get_identity_tracker() -> IdentityTracker:
-    """Return the global identity tracker instance."""
-    return _identity_tracker
-
-
 def get_temporal_analyzer() -> TemporalAnalyzer:
     """Return the global temporal analyzer instance."""
     return _temporal_analyzer
 
 
 def cleanup_session(session_id: str):
-    """Clean up all per-session state (no-face counters, identity, temporal)."""
+    """Clean up all per-session state (no-face counters, temporal)."""
     with _no_face_lock:
         _no_face_counters.pop(session_id, None)
-    _identity_tracker.clear_session(session_id)
     _temporal_analyzer.clear_session(session_id)
 
 
@@ -237,29 +228,6 @@ def analyze_emotion(face_crop: np.ndarray) -> Dict:
     return predict_emotion(face_crop)
 
 
-def analyze_identity(
-    session_id: str,
-    face_id: int,
-    face_crop: np.ndarray,
-) -> Dict:
-    """
-    Track identity consistency for a face within a session.
-
-    Returns:
-        {"embeddingShift": float, "samePerson": bool, "riskLevel": str}
-    """
-    tracker = get_identity_tracker()
-
-    try:
-        face_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
-        embedding = tracker.compute_embedding(face_rgb)
-        result = tracker.compare_to_baseline(session_id, face_id, embedding)
-        return result
-    except Exception as e:
-        print(f"[inference] Identity analysis error: {e}")
-        return {"embeddingShift": 0.0, "samePerson": True, "riskLevel": "low"}
-
-
 # ---------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------
@@ -311,38 +279,29 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = 
         face_id = face_info["face_id"]
         deepfake_crop = face_info.get("crop_original", crop)
 
-        # Run deepfake, emotion, identity in parallel (independent models)
+        # Run deepfake and emotion in parallel (independent models)
         # I2: Reuse module-level thread pool instead of creating per-face
         df_future = _inference_pool.submit(analyze_deepfake, deepfake_crop)
         em_future = _inference_pool.submit(analyze_emotion, crop)
-        id_future = _inference_pool.submit(analyze_identity, session_id, face_id, crop)
         # Await each future individually so a single timeout doesn't discard
         # already-completed results, and cancel remaining futures on timeout.
         deepfake_result = {"authenticityScore": None, "riskLevel": "unknown", "model": "timeout"}
         emotion_result = {"label": "Neutral", "confidence": 0.0, "scores": {}}
-        identity_result = {"embeddingShift": 0.0, "samePerson": True, "riskLevel": "low"}
         try:
             deepfake_result = df_future.result(timeout=30)
         except FuturesTimeoutError:
             print(f"[inference] Deepfake model timed out for session {session_id}")
             em_future.cancel()
-            id_future.cancel()
         try:
             emotion_result = em_future.result(timeout=30)
         except FuturesTimeoutError:
             print(f"[inference] Emotion model timed out for session {session_id}")
-            id_future.cancel()
-        try:
-            identity_result = id_future.result(timeout=30)
-        except FuturesTimeoutError:
-            print(f"[inference] Identity model timed out for session {session_id}")
 
         face_results.append({
             "faceId": face_id,
             "bbox": face_info["bbox"],
             "confidence": face_info["confidence"],
             "emotion": emotion_result,
-            "identity": identity_result,
             "deepfake": deepfake_result,
         })
 
@@ -352,7 +311,6 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = 
     # Compute trust score from aggregated signals
     auth_score = primary["deepfake"]["authenticityScore"]
     effective_auth = auth_score if auth_score is not None else 0.5
-    shift = primary["identity"]["embeddingShift"]
     emotion_conf = primary["emotion"]["confidence"]
 
     # Audio comes from a separate endpoint — AI service computes partial trust
@@ -362,11 +320,9 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = 
     # H10: Neutral baseline — range 0.5 (no confidence) to 1.0 (full confidence)
     behavior_conf = round(BEHAVIOR_BASELINE_SCALE * (1.0 + emotion_conf), 4)
 
-    # Weighted trust (video + identity + behavior) — no audio on AI side
-    # Dampen identity drift when multiple faces detected (expected switching)
-    identity_signal = max(0.7, 1.0 - shift) if len(faces) > 1 else 1.0 - shift
+    # Weighted trust (video + behavior) — no audio on AI side
     trust_score = round(
-        TRUST_WEIGHT_VIDEO * effective_auth + TRUST_WEIGHT_IDENTITY * identity_signal + TRUST_WEIGHT_BEHAVIOR * behavior_conf,
+        TRUST_WEIGHT_VIDEO * effective_auth + TRUST_WEIGHT_BEHAVIOR * behavior_conf,
         4,
     )
     trust_score = max(0.0, min(1.0, trust_score))
@@ -375,7 +331,6 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = 
     temporal_input = {
         "trustScore": trust_score,
         "authenticityScore": effective_auth,
-        "embeddingShift": shift,
         "emotionLabel": primary["emotion"]["label"],
     }
     temporal = _temporal_analyzer.record_frame(session_id, temporal_input)
@@ -395,7 +350,6 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = 
         "faces": face_results,
         "aggregated": {
             "emotion": primary["emotion"],
-            "identity": primary["identity"],
             "deepfake": primary["deepfake"],
             "trustScore": trust_score,
             "confidenceLayers": {
@@ -421,11 +375,6 @@ def _empty_response(session_id: str, captured_at: str = None) -> Dict:
                 "label": "Neutral",
                 "confidence": 0.0,
                 "scores": {lbl: 0.0 for lbl in EMOTION_LABELS},
-            },
-            "identity": {
-                "embeddingShift": 0.0,
-                "samePerson": True,
-                "riskLevel": "low",
             },
             "deepfake": {
                 "authenticityScore": 1.0,
@@ -457,11 +406,6 @@ def _camera_off_response(session_id: str, captured_at: str = None) -> Dict:
                 "label": "Neutral",
                 "confidence": 0.0,
                 "scores": {lbl: 0.0 for lbl in EMOTION_LABELS},
-            },
-            "identity": {
-                "embeddingShift": 0.0,
-                "samePerson": True,
-                "riskLevel": "low",
             },
             "deepfake": {
                 "authenticityScore": None,

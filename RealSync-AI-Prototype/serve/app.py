@@ -47,11 +47,12 @@ def _rate_limit_key(request: Request) -> str:
 limiter = Limiter(key_func=_rate_limit_key)
 
 from serve.config import PORT, HOST
-from serve.inference import analyze_frame, get_identity_tracker, cleanup_session, _utcnow_iso, _get_face_detector
+from serve.inference import analyze_frame, cleanup_session, _utcnow_iso, _get_face_detector
 from serve.deepfake_model import get_deepfake_model
 from serve.emotion_model import get_emotion_model
 from serve.audio_model import get_audio_model, predict_audio
 from serve.text_analyzer import get_text_analyzer, analyze_text as analyze_text_fn
+from serve.whisper_model import get_whisper_model, transcribe_audio
 
 # API key for service-to-service auth (required in production)
 AI_API_KEY = os.getenv("AI_API_KEY", "").strip()
@@ -88,13 +89,9 @@ async def lifespan(app: FastAPI):
     if not text_pipe:
         print("[app] WARNING: DeBERTa text analyzer failed to load")
 
-    # Pre-load FaceNet identity model
-    tracker = get_identity_tracker()
-    facenet = tracker._get_model()
-    if not facenet:
-        print("[app] WARNING: FaceNet identity model failed to load")
-    else:
-        print("[app] FaceNet identity model loaded")
+    whisper_model = get_whisper_model()
+    if not whisper_model:
+        print("[app] WARNING: Whisper transcription model failed to load")
 
     print("[app] Running warmup inference...")
 
@@ -105,9 +102,6 @@ async def lifespan(app: FastAPI):
             import mediapipe as mp
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(dummy_img, cv2.COLOR_BGR2RGB))
             face_det.detect(mp_image)
-        if facenet is not None:
-            dummy_face = np.zeros((160, 160, 3), dtype=np.uint8)
-            tracker.compute_embedding(dummy_face)
         print("[app] Warmup complete.")
     except Exception as e:
         print(f"[app] Warmup failed (non-fatal): {e}")
@@ -206,12 +200,6 @@ async def health(request: Request):
         models["face_detection"] = "error"
 
     try:
-        tracker = get_identity_tracker()
-        models["identity"] = "loaded" if tracker._get_model() is not None else "unavailable"
-    except Exception:
-        models["identity"] = "error"
-
-    try:
         models["audio"] = "loaded" if get_audio_model() is not None else "unavailable"
     except Exception:
         models["audio"] = "error"
@@ -221,13 +209,17 @@ async def health(request: Request):
     except Exception:
         models["text"] = "error"
 
+    try:
+        models["whisper"] = "loaded" if get_whisper_model() is not None else "unavailable"
+    except Exception:
+        models["whisper"] = "error"
+
     return {"ok": True, "models": models}
 
 
 @app.post("/api/analyze/frame")
-@limiter.limit("60/minute")
 async def analyze_frame_endpoint(request: Request, payload: AnalyzeFrameRequest):
-    """Analyze a video frame for deepfake, emotion, and identity signals."""
+    """Analyze a video frame for deepfake and emotion signals."""
     if not payload.frameB64 or not payload.frameB64.strip():
         raise HTTPException(status_code=400, detail="frameB64 is required")
     if not payload.sessionId or not _UUID_RE.match(payload.sessionId):
@@ -240,7 +232,7 @@ async def analyze_frame_endpoint(request: Request, payload: AnalyzeFrameRequest)
     # Atomic try-acquire: non-blocking attempt avoids TOCTOU race
     acquired = False
     try:
-        await asyncio.wait_for(_frame_semaphore.acquire(), timeout=0)
+        await asyncio.wait_for(_frame_semaphore.acquire(), timeout=5)
         acquired = True
     except asyncio.TimeoutError:
         raise HTTPException(status_code=429, detail="Frame analysis busy — try again later")
@@ -296,6 +288,41 @@ async def analyze_audio_endpoint(request: Request, payload: AnalyzeAudioRequest)
         raise HTTPException(status_code=500, detail="Audio analysis failed — see server logs")
 
 
+class TranscribeRequest(BaseModel):
+    sessionId: str
+    audioB64: str = Field(..., description="Base64-encoded PCM16 mono 16kHz audio")
+    durationMs: Optional[int] = None
+
+
+@app.post("/api/transcribe")
+@limiter.limit("30/minute")
+async def transcribe_endpoint(request: Request, payload: TranscribeRequest):
+    """Transcribe audio using Whisper."""
+    if not payload.audioB64:
+        raise HTTPException(status_code=400, detail="audioB64 is required")
+    if not payload.sessionId or not _UUID_RE.match(payload.sessionId):
+        raise HTTPException(status_code=400, detail="sessionId must be a valid UUID")
+    if len(payload.audioB64) > 4 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="audioB64 payload exceeds 4MB limit")
+
+    try:
+        result = await asyncio.wait_for(
+            run_in_threadpool(transcribe_audio, payload.audioB64),
+            timeout=INFERENCE_TIMEOUT_S,
+        )
+        processed_at = _utcnow_iso()
+        return {
+            "sessionId": payload.sessionId,
+            "processedAt": processed_at,
+            "transcript": result,
+        }
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Transcription timed out")
+    except Exception as e:
+        print(f"[app] Transcription failed: {e}")
+        raise HTTPException(status_code=500, detail="Transcription failed — see server logs")
+
+
 @app.post("/api/analyze/text")
 @limiter.limit("60/minute")
 async def analyze_text_endpoint(request: Request, payload: AnalyzeTextRequest):
@@ -324,16 +351,6 @@ async def analyze_text_endpoint(request: Request, payload: AnalyzeTextRequest):
     except Exception as e:
         print(f"[app] Text analysis failed: {e}")
         raise HTTPException(status_code=500, detail="Text analysis failed — see server logs")
-
-
-@app.post("/api/sessions/{session_id}/clear-identity")
-@limiter.limit("60/minute")
-async def clear_identity(request: Request, session_id: str):
-    """Clear stored identity baselines, temporal buffer, and no-face counters for a session."""
-    if not session_id or not _UUID_RE.match(session_id):
-        raise HTTPException(status_code=400, detail="sessionId must be a valid UUID")
-    cleanup_session(session_id)
-    return {"ok": True, "sessionId": session_id}
 
 
 # ---------------------------------------------------------------

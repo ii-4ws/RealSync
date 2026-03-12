@@ -16,11 +16,7 @@ const log = require("./logger");
 const THRESHOLDS = {
   deepfake: {
     medium: 0.70, // authenticityScore <= this → medium risk
-    high: 0.45,   // authenticityScore <= this → high risk
-  },
-  identity: {
-    medium: 0.30, // embeddingShift >= this → medium risk (was 0.20)
-    high: 0.50,   // embeddingShift >= this → high risk (was 0.40)
+    high: 0.40,   // authenticityScore <= this → high risk (real faces score ≥0.55 after calibration)
   },
   emotion: {
     angerMedium: 0.80, // was 0.75
@@ -58,6 +54,8 @@ class AlertFusionEngine {
   constructor() {
     /** @type {Map<string, number>} alertKey → last emitted timestamp */
     this.cooldowns = new Map();
+    /** @type {Map<string, number>} sessionId+faceId → consecutive low-score frame count */
+    this._consecutiveLow = new Map();
   }
 
   /**
@@ -107,9 +105,23 @@ class AlertFusionEngine {
     const keySuffix = faceId != null ? `_face${faceId}` : "";
     const nameLabel = participantName || (faceId != null ? `Participant ${faceId}` : "Participant");
 
-    // 1. Deepfake detection
+    // 1. Deepfake detection (with consecutive-frame gate to filter single-frame jitter)
     const authScore = agg.deepfake?.authenticityScore ?? 1;
-    if (authScore <= THRESHOLDS.deepfake.high) {
+    const sessionId = session?.sessionId || "unknown";
+    const lowKey = `${sessionId}_${faceId ?? "default"}`;
+    const MIN_CONSECUTIVE_LOW = 3; // require 3+ consecutive low frames before alerting
+
+    if (authScore <= THRESHOLDS.deepfake.medium) {
+      // Track consecutive low-score frames
+      this._consecutiveLow.set(lowKey, (this._consecutiveLow.get(lowKey) || 0) + 1);
+    } else {
+      // Score is above medium threshold — reset counter
+      this._consecutiveLow.set(lowKey, 0);
+    }
+
+    const consecutiveCount = this._consecutiveLow.get(lowKey) || 0;
+
+    if (authScore <= THRESHOLDS.deepfake.high && consecutiveCount >= MIN_CONSECUTIVE_LOW) {
       const key = `deepfake_high${keySuffix}`;
       if (this._checkCooldown(key)) {
         alerts.push(
@@ -126,7 +138,7 @@ class AlertFusionEngine {
         );
         this._markEmitted(key);
       }
-    } else if (authScore <= THRESHOLDS.deepfake.medium) {
+    } else if (authScore <= THRESHOLDS.deepfake.medium && consecutiveCount >= MIN_CONSECUTIVE_LOW) {
       const key = `deepfake_medium${keySuffix}`;
       if (this._checkCooldown(key)) {
         alerts.push(
@@ -145,48 +157,7 @@ class AlertFusionEngine {
       }
     }
 
-    // 2. Identity drift — suppress when multiple participants detected (expected face switching)
-    const shift = agg.identity?.embeddingShift ?? 0;
-    const faceCount = agg.faceCount || session?.metrics?.faceCount || 1;
-    if (faceCount > 1) {
-      // Multi-participant meeting: identity drift is expected, skip alerts
-    } else if (shift >= THRESHOLDS.identity.high) {
-      const key = `identity_high${keySuffix}`;
-      if (this._checkCooldown(key)) {
-        alerts.push(
-          buildAlert({
-            severity: "high",
-            category: "identity",
-            title: "Identity Inconsistency",
-            message: `${nameLabel}: Significant embedding drift detected (${shift.toFixed(2)}). Participant may have changed.`,
-            model: "identity-tracker",
-            confidence: shift,
-            faceId,
-            participantName,
-          })
-        );
-        this._markEmitted(key);
-      }
-    } else if (shift >= THRESHOLDS.identity.medium) {
-      const key = `identity_medium${keySuffix}`;
-      if (this._checkCooldown(key)) {
-        alerts.push(
-          buildAlert({
-            severity: "medium",
-            category: "identity",
-            title: "Identity Drift Detected",
-            message: `${nameLabel}: Embedding drift: ${shift.toFixed(2)}. Consider a liveness check.`,
-            model: "identity-tracker",
-            confidence: shift,
-            faceId,
-            participantName,
-          })
-        );
-        this._markEmitted(key);
-      }
-    }
-
-    // 3. Emotion-based aggression (skip if confidence < 40% — Zoom compression noise)
+    // 2. Emotion-based aggression (skip if confidence < 40% — Zoom compression noise)
     const emotion = agg.emotion;
     if (emotion?.label === "Angry" && emotion.confidence >= 0.40) {
       if (emotion.confidence > THRESHOLDS.emotion.angerHigh) {
@@ -275,7 +246,7 @@ class AlertFusionEngine {
       }
       const type = anomaly.type;
 
-      const KNOWN_TYPES = ["sudden_trust_drop", "identity_switch", "emotion_instability"];
+      const KNOWN_TYPES = ["sudden_trust_drop", "emotion_instability"];
       if (!KNOWN_TYPES.includes(type)) {
         log.debug("alertFusion", `Unknown temporal anomaly type: "${type}"`);
       }
@@ -292,20 +263,6 @@ class AlertFusionEngine {
           })
         );
         this._markEmitted("temporal_trust_drop");
-      }
-
-      if (type === "identity_switch" && this._checkCooldown("temporal_identity_switch")) {
-        alerts.push(
-          buildAlert({
-            severity: "critical",
-            category: "identity",
-            title: "Identity Switch Detected",
-            message: "Temporal analysis detected an abrupt identity change. Participant may have been replaced.",
-            model: "temporal-analyzer",
-            confidence: 0.90,
-          })
-        );
-        this._markEmitted("temporal_identity_switch");
       }
 
       if (type === "emotion_instability" && this._checkCooldown("temporal_emotion", 60_000)) {
