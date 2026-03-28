@@ -17,11 +17,13 @@
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "minimatch": "^9.0.9",
+    "path-to-regexp": "^8.4.0",
     "puppeteer": "^24.37.2",
     "uuid": "^11.1.0",
-    "ws": "^8.19.0",
-    "helmet": "^8.0.0",
-    "express-rate-limit": "^7.5.0"
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",
