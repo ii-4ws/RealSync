@@ -16,7 +16,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
-# cache-bust: 2026-03-28
+ARG CACHEBUST=1
 COPY . .
 
 RUN groupadd --gid 1001 appuser && useradd --uid 1001 --gid appuser appuser && chown -R appuser:appuser /app
