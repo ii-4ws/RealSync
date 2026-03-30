@@ -128,15 +128,19 @@ const deriveMetrics = (payload) => {
   }
 
   return {
-    ...payload,
     emotion: {
       ...(payload.emotion ?? {}),
       label: emotionLabel,
       confidence: toFixedNumber(emotionConfidence),
       scores: emotionScores,
     },
+    deepfake: payload.deepfake ?? {},
     confidenceLayers,
     trustScore: toFixedNumber(trustScore),
+    faces: payload.faces ?? [],
+    identity: payload.identity ?? {},
+    timestamp: payload.timestamp ?? new Date().toISOString(),
+    processedAt: payload.processedAt ?? null,
   };
 };
 

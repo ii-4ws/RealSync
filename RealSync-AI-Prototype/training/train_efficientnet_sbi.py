@@ -100,21 +100,15 @@ class SBIAugmentor:
     def _generate_blend_mask(self, size):
         """Generate a soft elliptical blending mask."""
         w, h = size
-        mask = Image.new("L", (w, h), 0)
-        pixels = mask.load()
-
         cx = w // 2 + random.randint(-w // 8, w // 8)
         cy = h // 2 + random.randint(-h // 8, h // 8)
-        rx = random.randint(w // 4, w // 2)
-        ry = random.randint(h // 4, h // 2)
+        rx = max(random.randint(w // 4, w // 2), 1)
+        ry = max(random.randint(h // 4, h // 2), 1)
 
-        for y_pos in range(h):
-            for x_pos in range(w):
-                dx = (x_pos - cx) / max(rx, 1)
-                dy = (y_pos - cy) / max(ry, 1)
-                dist = dx * dx + dy * dy
-                if dist < 1.0:
-                    pixels[x_pos, y_pos] = int(255 * (1.0 - dist))
+        y, x = np.ogrid[:h, :w]
+        dist = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2
+        mask_np = (255 * np.clip(1.0 - dist, 0, 1)).astype(np.uint8)
+        mask = Image.fromarray(mask_np)
 
         blur_radius = random.choice([5, 7, 9, 11])
         mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_radius))
@@ -282,10 +276,11 @@ def train(args):
             outputs = model(images)
             loss = criterion(outputs, labels)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             train_loss += loss.item()
-            predicted = (outputs > 0.5).float()
+            predicted = (outputs > 0.0).float()
             train_correct += (predicted == labels).sum().item()
             train_total += labels.size(0)
 
@@ -305,7 +300,7 @@ def train(args):
                 outputs = model(images)
                 loss = criterion(outputs, labels)
                 val_loss += loss.item()
-                predicted = (outputs > 0.5).float()
+                predicted = (outputs > 0.0).float()
                 val_correct += (predicted == labels).sum().item()
                 val_total += labels.size(0)
 

@@ -93,10 +93,16 @@ class TestAnalyzeFrame:
 
 class TestTrustScoreFormula:
     def test_trust_formula_calculation(self):
-        """AI-P-04: Verify trust score formula with known values."""
+        """AI-P-04: Verify trust score formula with known values.
+
+        M16: Uses the authoritative 2-signal formula from config.py
+        (video=0.55, behavior=0.45). Identity signal was removed;
+        backend reweights to 3-signal only when audio is available.
+        """
         auth_score = 0.9
         emotion_conf = 0.8
 
+        # behavior_conf = 0.5 * (1.0 + emotion_conf) — neutral baseline + emotion range
         behavior_conf = BEHAVIOR_BASELINE_SCALE * (1.0 + emotion_conf)
         expected = (
             TRUST_WEIGHT_VIDEO * auth_score
@@ -104,7 +110,7 @@ class TestTrustScoreFormula:
         )
         expected = max(0.0, min(1.0, expected))
 
-        # Verify the formula components
+        # Verify the formula weights match config.py
         assert abs(TRUST_WEIGHT_VIDEO - 0.55) < 0.01
         assert abs(TRUST_WEIGHT_BEHAVIOR - 0.45) < 0.01
         assert abs(BEHAVIOR_BASELINE_SCALE - 0.5) < 0.01

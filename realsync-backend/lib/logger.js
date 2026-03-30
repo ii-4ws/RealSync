@@ -23,7 +23,13 @@ function emit(level, component, message, extra) {
       : extra;
   }
 
-  const line = JSON.stringify(entry);
+  const replacer = (key, value) => {
+    if (value instanceof Error) {
+      return { message: value.message, stack: value.stack, ...value };
+    }
+    return value;
+  };
+  const line = JSON.stringify(entry, replacer);
 
   if (level === "error") {
     process.stderr.write(line + "\n");

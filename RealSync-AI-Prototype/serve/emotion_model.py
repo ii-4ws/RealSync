@@ -106,16 +106,7 @@ def get_emotion_model():
                 print("[emotion] DISABLED: weights not found at " + EMOTION_WEIGHTS_PATH)
                 return None
 
-            try:
-                checkpoint = torch.load(EMOTION_WEIGHTS_PATH, map_location="cpu", weights_only=True)
-            except Exception as load_err:
-                # #8: Only fall back for known format incompatibility, not arbitrary failures
-                err_msg = str(load_err)
-                if "weights_only" in err_msg or "Unpickling" in err_msg or "allowed_globals" in err_msg:
-                    print("[emotion] weights_only=True incompatible, falling back to weights_only=False (local weights only)")
-                    checkpoint = torch.load(EMOTION_WEIGHTS_PATH, map_location="cpu", weights_only=False)
-                else:
-                    raise
+            checkpoint = torch.load(EMOTION_WEIGHTS_PATH, map_location="cpu", weights_only=True)
 
             # Auto-detect architecture from checkpoint metadata
             backbone_name = checkpoint.get("backbone", "mobilenetv2")

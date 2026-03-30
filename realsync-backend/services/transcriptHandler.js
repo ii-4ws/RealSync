@@ -21,8 +21,8 @@ const handleTranscript = (session, transcript) => {
   if (isFinal) {
     session.transcriptState.lines.push({ text, ts, confidence, speaker });
     // M17: Cap in-memory transcript lines to prevent unbounded growth
-    if (session.transcriptState.lines.length >= 2000) {
-      session.transcriptState.lines = session.transcriptState.lines.slice(-2000);
+    if (session.transcriptState.lines.length > 500) {
+      session.transcriptState.lines = session.transcriptState.lines.slice(-500);
     }
     session.transcriptState.interim = "";
 
@@ -74,7 +74,7 @@ const handleTranscript = (session, transcript) => {
     fusedAlerts.forEach((alert) => {
       alert.recommendation = getRecommendation(alert.category, alert.severity);
       session.alerts.push(alert);
-      if (session.alerts.length > 500) session.alerts.shift();
+      if (session.alerts.length > 200) { session.alerts = session.alerts.slice(-200); }
       broadcastToSession(session.id, { type: "alert", ...alert });
       persistence.insertAlert(session.id, alert).catch((err) => { log.warn("persistence", `operation failed: ${err?.message ?? err}`); });
     });
@@ -106,7 +106,7 @@ const handleTranscript = (session, transcript) => {
             for (const ba of fused) {
               ba.recommendation = getRecommendation(ba.category, ba.severity);
               session.alerts.push(ba);
-              if (session.alerts.length > 500) session.alerts.shift();
+              if (session.alerts.length > 200) { session.alerts = session.alerts.slice(-200); }
               broadcastToSession(session.id, { type: "alert", ...ba });
               persistence.insertAlert(session.id, ba).catch((err) => { log.warn("persistence", `operation failed: ${err?.message ?? err}`); });
             }

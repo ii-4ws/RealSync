@@ -14,7 +14,7 @@ fi
 sleep 1
 
 echo "Starting RealSync AI Service (port 5100)..."
-cd "$ROOT_DIR/RealSync-AI-Prototype" && source .venv/bin/activate && python3 -m serve.app &
+cd "$ROOT_DIR/RealSync-AI-Prototype" && .venv/bin/python -m serve.app &
 AI_PID=$!
 
 # M9: Wait for AI service to be ready before starting backend

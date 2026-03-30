@@ -42,10 +42,9 @@ export function WebSocketProvider({ sessionId, children }: WebSocketProviderProp
         reconnectTimerRef.current = null;
       }
       if (wsRef.current) {
-        const noop = () => {};
-        wsRef.current.onclose = noop;
-        wsRef.current.onerror = noop;
-        wsRef.current.onmessage = noop;
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        wsRef.current.onmessage = null;
         wsRef.current.close();
         wsRef.current = null;
       }
@@ -140,9 +139,9 @@ export function WebSocketProvider({ sessionId, children }: WebSocketProviderProp
           if (!isActive) return;
           setIsConnected(false);
           wsRef.current = null;
-          // H19: Exponential backoff reconnect
-          const delay = reconnectDelayRef.current;
-          reconnectDelayRef.current = Math.min(delay * 2, MAX_RECONNECT_DELAY);
+          // H19: Exponential backoff reconnect with jitter (0-1s)
+          const delay = reconnectDelayRef.current + Math.random() * 1000;
+          reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, MAX_RECONNECT_DELAY);
           reconnectTimerRef.current = window.setTimeout(() => {
             if (isActive) connect();
           }, delay);
@@ -155,8 +154,8 @@ export function WebSocketProvider({ sessionId, children }: WebSocketProviderProp
       } catch {
         // WebSocket constructor can throw if URL is invalid
         if (isActive) {
-          const delay = reconnectDelayRef.current;
-          reconnectDelayRef.current = Math.min(delay * 2, MAX_RECONNECT_DELAY);
+          const delay = reconnectDelayRef.current + Math.random() * 1000;
+          reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, MAX_RECONNECT_DELAY);
           reconnectTimerRef.current = window.setTimeout(() => {
             if (isActive) connect();
           }, delay);

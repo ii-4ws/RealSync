@@ -60,9 +60,7 @@ router.post("/api/sessions", sessionCreateLimiter, (req, res) => {
     }
   }
 
-  const session = createSession({ title, meetingType, meetingUrl: meetingUrl || null, userId: req.userId || null });
-
-  // Validate and store scheduledAt if provided
+  // Validate scheduledAt before creating the session to avoid orphans
   if (scheduledAt !== undefined) {
     if (typeof scheduledAt !== "string") {
       return res.status(400).json({ error: "scheduledAt must be an ISO date string" });
@@ -71,6 +69,12 @@ router.post("/api/sessions", sessionCreateLimiter, (req, res) => {
     if (!Number.isFinite(ts)) {
       return res.status(400).json({ error: "scheduledAt is not a valid date" });
     }
+  }
+
+  const session = createSession({ title, meetingType, meetingUrl: meetingUrl || null, userId: req.userId || null });
+
+  // Store scheduledAt after session creation
+  if (scheduledAt !== undefined) {
     session.scheduledAt = scheduledAt;
   }
 

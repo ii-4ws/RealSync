@@ -107,7 +107,7 @@ class AlertFusionEngine {
 
     // 1. Deepfake detection (with consecutive-frame gate to filter single-frame jitter)
     const authScore = agg.deepfake?.authenticityScore ?? 1;
-    const sessionId = session?.sessionId || "unknown";
+    const sessionId = session?.id || "unknown";
     const lowKey = `${sessionId}_${faceId ?? "default"}`;
     const MIN_CONSECUTIVE_LOW = 3; // require 3+ consecutive low frames before alerting
 
@@ -251,7 +251,7 @@ class AlertFusionEngine {
         log.debug("alertFusion", `Unknown temporal anomaly type: "${type}"`);
       }
 
-      if (type === "sudden_trust_drop" && this._checkCooldown("temporal_trust_drop")) {
+      if (type === "sudden_trust_drop" && this._checkCooldown(`temporal_trust_drop_${session?.id || "unknown"}`)) {
         alerts.push(
           buildAlert({
             severity: "high",
@@ -262,10 +262,10 @@ class AlertFusionEngine {
             confidence: 0.85,
           })
         );
-        this._markEmitted("temporal_trust_drop");
+        this._markEmitted(`temporal_trust_drop_${session?.id || "unknown"}`);
       }
 
-      if (type === "emotion_instability" && this._checkCooldown("temporal_emotion", 60_000)) {
+      if (type === "emotion_instability" && this._checkCooldown(`temporal_emotion_${session?.id || "unknown"}`, 60_000)) {
         alerts.push(
           buildAlert({
             severity: "low",
@@ -276,7 +276,7 @@ class AlertFusionEngine {
             confidence: 0.60,
           })
         );
-        this._markEmitted("temporal_emotion");
+        this._markEmitted(`temporal_emotion_${session?.id || "unknown"}`);
       }
     }
 
@@ -322,6 +322,7 @@ class AlertFusionEngine {
    */
   reset() {
     this.cooldowns.clear();
+    this._consecutiveLow = new Map();
   }
 }
 

@@ -190,6 +190,13 @@ function attachIngestHandler(wssIngest) {
       };
       broadcastToSession(session.id, alertPayload);
       session.alerts.push(alertPayload);
+      // M18: Cap in-memory alerts to prevent unbounded growth
+      if (session.alerts.length > 200) {
+        session.alerts = session.alerts.slice(-200);
+      }
+
+      // Re-check: user may have ended session during broadcast
+      if (session.endedAt) return;
 
       // Auto-end the session
       session.endedAt = makeIso();

@@ -104,8 +104,11 @@ const getFallbackMetrics = (): Metrics => ({
   },
 });
 
-// H15: Clamp to 100 to handle values > 1 correctly
-const toPercent = (value: number) => Math.min(100, Math.round(value * 100));
+const toPercent = (v: number | null | undefined): number => {
+  if (v == null) return 0;
+  const pct = v > 1.5 ? v : v * 100;
+  return Math.min(100, Math.max(0, Math.round(pct)));
+};
 
 const getRiskColor = (risk: RiskLevel) => {
   if (risk === 'high') return 'text-red-400';
@@ -228,7 +231,8 @@ export function DashboardScreen({
         onBotConnected?.();
       }
       if (newStatus === 'disconnected' && sessionId) {
-        onEndSession?.();
+        // Session data preserved — user can view final results
+        // Session auto-ended by backend, not frontend
       }
       return;
     }

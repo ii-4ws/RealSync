@@ -133,15 +133,19 @@ async function analyzeFrame({ sessionId, frameB64, capturedAt }) {
         // AI service is busy — wait briefly and retry once
         log.debug("aiClient", "AI service busy (429) — retrying in 1.5s");
         await new Promise((r) => setTimeout(r, 1500));
+        const retryController = new AbortController();
+        const retryTimer = setTimeout(() => retryController.abort(), ANALYZE_TIMEOUT_MS);
         try {
           const retryRes = await fetchImpl(`${AI_SERVICE_URL}/api/analyze/frame`, {
             method: "POST",
             headers,
             body: JSON.stringify({ sessionId, frameB64, capturedAt }),
-            signal: controller.signal,
+            signal: retryController.signal,
           });
           if (retryRes.ok) return await retryRes.json();
-        } catch (_) { /* retry failed — give up */ }
+        } catch (_) { /* retry failed — give up */ } finally {
+          clearTimeout(retryTimer);
+        }
         return null;
       }
       log.error("aiClient", `AI service responded ${res.status} — returning mock. Start AI service on ${AI_SERVICE_URL}`);

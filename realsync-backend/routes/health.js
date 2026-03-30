@@ -25,7 +25,7 @@ router.get("/api/health", async (req, res) => {
 
   const allOk = checks.ai === "ok" && checks.supabase === "ok";
 
-  res.status(200).json({
+  res.status(allOk ? 200 : 503).json({
     ok: allOk,
     status: allOk ? "healthy" : "degraded",
     timestamp: new Date().toISOString(),

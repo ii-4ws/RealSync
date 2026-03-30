@@ -354,6 +354,7 @@ async function getUserNotifications(userId, { limit = 50, offset = 0 } = {}) {
         notification_reads!left(read_at, user_id)
       `)
       .eq("sessions.user_id", userId)
+      .or(`user_id.eq.${userId},user_id.is.null`, { foreignTable: "notification_reads" })
       .order("ts", { ascending: false })
       .range(offset, offset + limit - 1),
     db.rpc("get_unread_notification_count", { p_user_id: userId }),

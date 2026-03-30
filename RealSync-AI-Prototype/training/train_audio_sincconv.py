@@ -47,7 +47,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEIGHTS_OUT = os.path.join(BASE_DIR, "src", "models", "aasist_weights.pth")
 
 SAMPLE_RATE = 16000
-TARGET_LENGTH = 16000  # 1 second at 16kHz (4x faster training; model is length-agnostic)
+TARGET_LENGTH = 64000  # Must match serve/audio_model.py TARGET_LENGTH (4s at 16kHz)
 BATCH_SIZE = 32
 EPOCHS = 50
 LEARNING_RATE = 1e-4  # Gentler updates for SincConv
@@ -413,7 +413,7 @@ def train(args):
             optimizer.step()
 
             train_loss += loss.item()
-            predicted = (outputs > 0.5).float()
+            predicted = (outputs > 0.0).float()
             train_correct += (predicted == labels).sum().item()
             train_total += labels.size(0)
 
@@ -438,7 +438,7 @@ def train(args):
                 outputs = model(waveforms)
                 loss = criterion(outputs, labels)
                 val_loss += loss.item()
-                predicted = (outputs > 0.5).float()
+                predicted = (outputs > 0.0).float()
                 val_correct += (predicted == labels).sum().item()
                 val_total += labels.size(0)
 

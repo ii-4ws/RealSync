@@ -26,6 +26,7 @@ function processAudioChunk(session, dataB64) {
       onTranscript: (t) => handleTranscript(session, t),
       onError: (err) => {
         log.warn("stt", `STT error for session ${session.id}: ${err?.message ?? err}`);
+        session.stt = null;
       },
     });
   }
@@ -61,9 +62,11 @@ function processAudioChunk(session, dataB64) {
             session.metrics.confidenceLayers.audio = res.audio.authenticityScore;
           }
           // Fix 2: Recompute trust and broadcast so frontend sees audio updates
+          // C5 fix: Use raw deepfake authenticityScore (not composite trustScore) to avoid double-counting
           if (session.metrics?.trustScore != null) {
             const behaviorConf = session.metrics.confidenceLayers?.behavior || 0.55;
-            const videoSignal = session.metrics.confidenceLayers?.video ?? 0.5;
+            const videoSignal = session.metrics.deepfake?.authenticityScore
+              ?? session.metrics.confidenceLayers?.video ?? 0.5;
             const audioScore = res.audio.authenticityScore;
             const finalTrust = 0.45 * videoSignal + 0.35 * audioScore + 0.20 * behaviorConf;
             session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));

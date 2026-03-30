@@ -151,6 +151,10 @@ def predict_deepfake(face_crop_bgr: np.ndarray) -> dict:
             # Zoom double-compression makes model score real faces near 0.
             # center=0.003, steepness=300: maps median real face to 0.73 (low risk);
             # even worst-case real frames (0.0001) score 0.63 (above alert thresholds).
+            # TODO(post-RunPod): Re-evaluate steepness after fine-tuning.
+            # Current steepness=300 creates near-binary output ([0.50, 0.95]).
+            # After tuning, model may produce better-separated raw scores.
+            # Consider reducing to 50-100 and re-calibrating on validation set.
             calibrated = 1.0 / (1.0 + math.exp(-300 * (raw_authenticity - 0.003)))
             calibrated = 0.50 + calibrated * 0.45
 

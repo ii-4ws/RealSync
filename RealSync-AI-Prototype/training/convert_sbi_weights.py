@@ -98,13 +98,13 @@ def download_checkpoint(local_path=None):
                     with tempfile.TemporaryDirectory() as tmpdir:
                         tf.extract(member, tmpdir)
                         extracted = os.path.join(tmpdir, member.name)
-                        state = torch.load(extracted, map_location="cpu", weights_only=False)
+                        state = torch.load(extracted, map_location="cpu", weights_only=True)
                     break
             else:
                 print("[convert] ERROR: No files found in tar archive")
                 sys.exit(1)
     else:
-        state = torch.load(raw_path, map_location="cpu", weights_only=False)
+        state = torch.load(raw_path, map_location="cpu", weights_only=True)
 
     # Unwrap checkpoint format
     if isinstance(state, dict):

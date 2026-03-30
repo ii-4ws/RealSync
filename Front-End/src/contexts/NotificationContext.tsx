@@ -203,18 +203,6 @@ export function NotificationProvider({ children }: { children: import('react').R
     return () => subscription.unsubscribe();
   }, []);
 
-  // Auto-request desktop notification permission on first visit
-  useEffect(() => {
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      // Small delay so the page finishes rendering before the browser permission prompt
-      const timer = setTimeout(() => {
-        Notification.requestPermission().then((result) => {
-          setDesktopPermission(result);
-        }).catch(() => {});
-      }, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, []);
 
   // Subscribe to WS alert messages
   useEffect(() => {

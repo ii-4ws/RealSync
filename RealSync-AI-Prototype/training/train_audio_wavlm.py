@@ -516,7 +516,7 @@ def train(args):
             optimizer.step()
 
             train_loss += loss.item()
-            predicted = (outputs > 0.5).float()
+            predicted = (outputs > 0.0).float()
             train_correct += (predicted == labels).sum().item()
             train_total += labels.size(0)
 
@@ -546,7 +546,7 @@ def train(args):
                 outputs = model(waveforms)
                 loss = criterion(outputs, labels)
                 val_loss += loss.item()
-                predicted = (outputs > 0.5).float()
+                predicted = (outputs > 0.0).float()
                 val_correct += (predicted == labels).sum().item()
                 val_total += labels.size(0)
 

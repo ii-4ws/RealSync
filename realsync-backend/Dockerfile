@@ -3,6 +3,7 @@ FROM node:20-slim
 # Install Chromium dependencies for Puppeteer
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
+    curl \
     ca-certificates \
     fonts-liberation \
     libasound2 \
@@ -16,10 +17,14 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
-ARG CACHEBUST=1
-COPY . .
+RUN groupadd --gid 1001 appuser && useradd --uid 1001 --gid appuser appuser
 
-RUN groupadd --gid 1001 appuser && useradd --uid 1001 --gid appuser appuser && chown -R appuser:appuser /app
+ARG CACHEBUST=1
+COPY --chown=appuser:appuser . .
+
 USER appuser
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:${PORT:-4000}/api/health || exit 1
 
 CMD ["node", "index.js"]
