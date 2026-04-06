@@ -48,6 +48,8 @@ from serve.inference import analyze_frame, cleanup_session, _utcnow_iso, _get_fa
 from serve.clip_deepfake_model import get_clip_deepfake_model
 from serve.emotion_model import get_emotion_model
 from serve.audio_model import get_audio_model, predict_audio
+from serve.text_analyzer import get_text_analyzer, analyze_text as analyze_text_fn
+from serve.whisper_model import get_whisper_model, transcribe_audio
 
 AI_API_KEY = os.getenv("AI_API_KEY", "").strip()
 
@@ -81,6 +83,14 @@ async def lifespan(app: FastAPI):
         print("[app] WARNING: Emotion model failed to load")
     if not audio:
         print("[app] WARNING: WavLM audio model failed to load")
+
+    text_pipe = get_text_analyzer()
+    if not text_pipe:
+        print("[app] WARNING: DeBERTa text analyzer failed to load")
+
+    whisper_model = get_whisper_model()
+    if not whisper_model:
+        print("[app] WARNING: Whisper transcription model failed to load")
 
     print("[app] Running warmup inference...")
     try:
@@ -186,6 +196,16 @@ async def health(request: Request):
     except Exception:
         models["audio"] = "error"
 
+    try:
+        models["text"] = "loaded" if get_text_analyzer() is not None else "unavailable"
+    except Exception:
+        models["text"] = "error"
+
+    try:
+        models["whisper"] = "loaded" if get_whisper_model() is not None else "unavailable"
+    except Exception:
+        models["whisper"] = "error"
+
     return {"ok": True, "models": models}
 
 
@@ -254,6 +274,70 @@ async def analyze_audio_endpoint(request: Request, payload: AnalyzeAudioRequest)
     except Exception as e:
         print(f"[app] Audio analysis failed: {e}")
         raise HTTPException(status_code=500, detail="Audio analysis failed — see server logs")
+
+
+class AnalyzeTextRequest(BaseModel):
+    sessionId: str
+    text: str = Field(..., description="Transcript text to analyze for behavioral signals")
+
+
+class TranscribeRequest(BaseModel):
+    sessionId: str
+    audioB64: str = Field(..., description="Base64-encoded PCM16 mono 16kHz audio")
+
+
+@app.post("/api/analyze/text")
+@limiter.limit("30/minute")
+async def analyze_text_endpoint(request: Request, payload: AnalyzeTextRequest):
+    """Analyze transcript text for social engineering / phishing signals."""
+    if not payload.text or not payload.text.strip():
+        raise HTTPException(status_code=400, detail="text is required")
+    if not payload.sessionId or not _UUID_RE.match(payload.sessionId):
+        raise HTTPException(status_code=400, detail="sessionId must be a valid UUID")
+
+    try:
+        result = await asyncio.wait_for(
+            run_in_threadpool(analyze_text_fn, payload.text),
+            timeout=INFERENCE_TIMEOUT_S,
+        )
+        return {
+            "sessionId": payload.sessionId,
+            "processedAt": _utcnow_iso(),
+            "behavioral": result,
+        }
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Text analysis timed out")
+    except Exception as e:
+        print(f"[app] Text analysis failed: {e}")
+        raise HTTPException(status_code=500, detail="Text analysis failed — see server logs")
+
+
+@app.post("/api/transcribe")
+@limiter.limit("20/minute")
+async def transcribe_endpoint(request: Request, payload: TranscribeRequest):
+    """Transcribe audio using Whisper."""
+    if not payload.audioB64:
+        raise HTTPException(status_code=400, detail="audioB64 is required")
+    if not payload.sessionId or not _UUID_RE.match(payload.sessionId):
+        raise HTTPException(status_code=400, detail="sessionId must be a valid UUID")
+    if len(payload.audioB64 or "") > 5_000_000:
+        raise HTTPException(status_code=413, detail="audioB64 payload exceeds limit")
+
+    try:
+        result = await asyncio.wait_for(
+            run_in_threadpool(transcribe_audio, payload.audioB64),
+            timeout=INFERENCE_TIMEOUT_S,
+        )
+        return {
+            "sessionId": payload.sessionId,
+            "processedAt": _utcnow_iso(),
+            "transcription": result,
+        }
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Transcription timed out")
+    except Exception as e:
+        print(f"[app] Transcription failed: {e}")
+        raise HTTPException(status_code=500, detail="Transcription failed — see server logs")
 
 
 # ---------------------------------------------------------------
