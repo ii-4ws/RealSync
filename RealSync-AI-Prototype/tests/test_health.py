@@ -11,7 +11,7 @@ async def test_health_returns_ok(client):
     assert data["ok"] is True
     assert "models" in data
     models = data["models"]
-    expected_keys = {"clip_deepfake", "emotion", "face_detection", "audio"}
+    expected_keys = {"clip_deepfake", "emotion", "face_detection", "audio", "text", "whisper"}
     assert set(models.keys()) == expected_keys
     for key in expected_keys:
         assert models[key] in ("loaded", "unavailable", "error")

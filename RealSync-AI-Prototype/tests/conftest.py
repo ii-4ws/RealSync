@@ -7,6 +7,7 @@ Provides:
 - Session ID generator
 """
 import base64
+import struct
 import uuid
 
 import numpy as np
@@ -50,3 +51,10 @@ def small_jpeg_b64() -> str:
     img = np.zeros((5, 5, 3), dtype=np.uint8)
     _, buf = cv2.imencode(".jpg", img)
     return base64.b64encode(buf.tobytes()).decode()
+
+
+@pytest.fixture
+def valid_audio_b64() -> str:
+    """Base64-encoded PCM16 mono 16kHz silence (4 seconds = 64000 samples)."""
+    pcm = struct.pack(f"<{64000}h", *([0] * 64000))
+    return base64.b64encode(pcm).decode()
