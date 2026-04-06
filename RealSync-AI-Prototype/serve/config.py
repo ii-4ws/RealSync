@@ -36,9 +36,9 @@ DEEPFAKE_AUTH_THRESHOLD_HIGH_RISK = 0.40
 # --- SPRT (Sequential Probability Ratio Test) ---
 SPRT_ALPHA = 0.05              # Max false positive rate (flag real as fake)
 SPRT_BETA = 0.05               # Max false negative rate (miss a real fake)
-SPRT_REAL_MEAN = 0.7645        # Calibrated from Ahmed's Zoom screenshots (10 real)
-SPRT_FAKE_MEAN = 0.6419        # Calibrated from Ahmed's Zoom screenshots (9 fake)
-SPRT_SCORE_STD = 0.1726        # Avg std of real + fake score distributions
+SPRT_REAL_MEAN = 0.75          # Recalibrated for ensemble scores (CLIP+freq+boundary)
+SPRT_FAKE_MEAN = 0.52          # Recalibrated: avg of raw swap (0.50) + enhanced (0.53)
+SPRT_SCORE_STD = 0.12          # Tighter std with ensemble smoothing
 
 # --- Session ---
 SESSION_TTL_SECONDS = 3600
@@ -68,6 +68,11 @@ TEXT_HIGH_SEVERITY_THRESHOLD = 0.80
 TEXT_MAX_LENGTH = 2000
 TEXT_EXECUTOR_WORKERS = 2
 TEXT_INFERENCE_TIMEOUT = 15
+
+# --- Ensemble Deepfake Detection ---
+ENSEMBLE_WEIGHT_CLIP = 0.50       # Semantic/spatial analysis (CLIP ViT-L/14)
+ENSEMBLE_WEIGHT_FREQUENCY = 0.30  # Frequency-domain artifacts (DCT/FFT)
+ENSEMBLE_WEIGHT_BOUNDARY = 0.20   # Face boundary blending artifacts
 
 # --- Inference ---
 INFERENCE_TIMEOUT_S = 30

@@ -38,11 +38,16 @@ from serve.config import (
     NO_FACE_EVICT_BATCH,
     TEMPORAL_SMOOTHING_MIN_FRAMES,
     INFERENCE_TIMEOUT_S,
+    ENSEMBLE_WEIGHT_CLIP,
+    ENSEMBLE_WEIGHT_FREQUENCY,
+    ENSEMBLE_WEIGHT_BOUNDARY,
 )
 from serve.temporal_analyzer import TemporalAnalyzer
 from serve.emotion_model import predict_emotion, get_emotion_model
 from serve.clip_deepfake_model import predict_clip_deepfake, get_clip_deepfake_model
 from serve.sprt_detector import SPRTDetector
+from serve.frequency_analyzer import analyze_frequency
+from serve.boundary_analyzer import analyze_boundary
 
 
 # ---------------------------------------------------------------
@@ -223,12 +228,16 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = 
         crop = face_info["crop"]
         deepfake_crop = face_info.get("crop_original", crop)
 
-        # Run CLIP deepfake + emotion in parallel
+        # Run CLIP deepfake + emotion + frequency + boundary in parallel
         clip_future = _inference_pool.submit(predict_clip_deepfake, deepfake_crop)
         emo_future = _inference_pool.submit(predict_emotion, crop)
+        freq_future = _inference_pool.submit(analyze_frequency, deepfake_crop)
+        boundary_future = _inference_pool.submit(analyze_boundary, deepfake_crop)
 
         clip_result = {"authenticityScore": None, "riskLevel": "unknown", "model": "timeout"}
         emotion_result = {"label": "Neutral", "confidence": 0.0, "scores": {}}
+        freq_result = {"frequencyScore": 0.5, "highFreqRatio": 0.0, "spectralFlatness": 0.0}
+        boundary_result = {"boundaryScore": 0.5, "gradientDiscontinuity": 0.0, "colorShift": 0.0}
 
         try:
             clip_result = clip_future.result(timeout=INFERENCE_TIMEOUT_S)
@@ -240,12 +249,56 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = 
         except FuturesTimeoutError:
             print(f"[inference] Emotion model timed out for session {session_id}")
 
+        try:
+            freq_result = freq_future.result(timeout=10)
+        except (FuturesTimeoutError, Exception) as e:
+            print(f"[inference] Frequency analyzer failed for session {session_id}: {e}")
+
+        try:
+            boundary_result = boundary_future.result(timeout=10)
+        except (FuturesTimeoutError, Exception) as e:
+            print(f"[inference] Boundary analyzer failed for session {session_id}: {e}")
+
+        # Ensemble: weighted combination of all three detectors
+        clip_score = clip_result.get("authenticityScore")
+        freq_score = freq_result["frequencyScore"]
+        boundary_score = boundary_result["boundaryScore"]
+
+        if clip_score is not None:
+            ensemble_score = round(
+                ENSEMBLE_WEIGHT_CLIP * clip_score
+                + ENSEMBLE_WEIGHT_FREQUENCY * freq_score
+                + ENSEMBLE_WEIGHT_BOUNDARY * boundary_score,
+                4,
+            )
+            # Determine risk level from ensemble score
+            if ensemble_score > 0.70:
+                ensemble_risk = "low"
+            elif ensemble_score > 0.40:
+                ensemble_risk = "medium"
+            else:
+                ensemble_risk = "high"
+        else:
+            ensemble_score = None
+            ensemble_risk = "unknown"
+
+        deepfake_result = {
+            "authenticityScore": ensemble_score,
+            "riskLevel": ensemble_risk,
+            "model": "ensemble(CLIP+freq+boundary)",
+            "components": {
+                "clip": clip_result,
+                "frequency": freq_result,
+                "boundary": boundary_result,
+            },
+        }
+
         face_results.append({
             "faceId": face_info["face_id"],
             "bbox": face_info["bbox"],
             "confidence": face_info["confidence"],
             "emotion": emotion_result,
-            "deepfake": clip_result,
+            "deepfake": deepfake_result,
         })
 
     # Aggregate: primary face
