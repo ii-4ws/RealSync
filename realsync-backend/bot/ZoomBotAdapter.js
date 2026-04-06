@@ -29,7 +29,7 @@ const PUPPETEER_TIMEOUT_MS = 120_000; // I5: 120s to get into the meeting (Puppe
 const FRAME_INTERVAL_MS = 1500; // 1 frame every 1.5s (~0.67 FPS)
 const CAPTION_POLL_MS = 1000; // check captions every 1s
 const AUDIO_CHUNK_MS = 500; // send audio chunks every 500ms
-const VIEWPORT = { width: 1920, height: 1080 };
+const VIEWPORT = { width: 1280, height: 720 };
 
 // Debug screenshots directory (only used when DEBUG_SCREENSHOTS=true)
 const SCREENSHOTS_DIR = path.join(__dirname, "screenshots");
@@ -1289,12 +1289,17 @@ class ZoomBotAdapter {
           return speaker || null;
         }, this.displayName || "RealSync Bot").catch(() => null);
 
-        // PNG capture: lossless, avoids JPEG re-compression artifacts
+        // PNG capture with timeout: lossless, avoids JPEG re-compression artifacts
         // that degrade deepfake detection accuracy on Zoom video
-        const screenshot = await this.page.screenshot({
+        const screenshotPromise = this.page.screenshot({
           encoding: "base64",
           type: "png",
         });
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Screenshot timed out after 10s")), 10000)
+        );
+        const screenshot = await Promise.race([screenshotPromise, timeoutPromise]);
+        log.info("zoomBot", `Frame captured (${Math.round(screenshot.length / 1024)}KB base64)`);
 
         this.onIngestMessage({
           type: "frame",
