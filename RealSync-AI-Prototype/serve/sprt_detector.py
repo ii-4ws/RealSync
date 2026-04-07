@@ -15,7 +15,6 @@ Usage:
             # Decision reached with 95% confidence
 """
 import math
-from collections import defaultdict
 
 from serve.config import (
     SPRT_ALPHA,

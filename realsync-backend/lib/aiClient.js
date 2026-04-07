@@ -1,94 +1,25 @@
 /**
  * AI Inference Service client.
  *
- * Sends video frames to the Python AI service (FastAPI :5100) and returns
- * per-face analysis results.  Falls back to a mock response when the AI
- * service is unavailable so the rest of the pipeline can be developed and
- * tested independently.
+ * Sends video frames, audio, and text to the Python AI service (FastAPI :5100).
+ * Returns null when the AI service is unavailable — callers handle the absence.
  */
 
 const log = require("./logger");
-const { EMOTIONS } = require("./constants");
 
 const AI_SERVICE_URL =
   process.env.AI_SERVICE_URL || "http://localhost:5100";
 const ANALYZE_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 15000);
 const AI_API_KEY = process.env.AI_API_KEY || "";
 
-function generateMockResponse(sessionId, capturedAt) {
-  const now = new Date().toISOString();
-  const randScore = () => Number((Math.random()).toFixed(4));
-  const randBetween = (lo, hi) =>
-    Number((lo + Math.random() * (hi - lo)).toFixed(4));
-
-  // Build random emotion scores that sum to ~1
-  const rawScores = EMOTIONS.map(() => Math.random());
-  const total = rawScores.reduce((s, v) => s + v, 0);
-  const scores = {};
-  EMOTIONS.forEach((e, i) => {
-    scores[e] = Number((rawScores[i] / total).toFixed(4));
-  });
-  const dominantIdx = rawScores.indexOf(Math.max(...rawScores));
-  const emotionLabel = EMOTIONS[dominantIdx];
-
-  const authenticityScore = randBetween(0.55, 0.98);
-  const deepfakeRisk =
-    authenticityScore > 0.85 ? "low" : authenticityScore > 0.7 ? "medium" : "high";
-
-  const face = {
-    faceId: 0,
-    bbox: { x: 100, y: 50, w: 200, h: 200 },
-    confidence: randBetween(0.85, 0.99),
-    emotion: {
-      label: emotionLabel,
-      confidence: scores[emotionLabel],
-      scores,
-    },
-    deepfake: {
-      authenticityScore,
-      riskLevel: deepfakeRisk,
-      model: "EfficientNet-B4-SBI (mock)",
-    },
-  };
-
-  // M16: Match AI service trust formula — neutral baseline for behavior
-  const behaviorConf = Number(
-    (0.5 * (1.0 + scores[emotionLabel])).toFixed(4)
-  );
-  const audioConf = null; // No audio in mock — don't fabricate a signal
-  // Trust score: 2-signal weighted formula matching AI service (video=0.55, behavior=0.45)
-  const trustScore = Number(
-    (0.55 * authenticityScore + 0.45 * behaviorConf).toFixed(4)
-  );
-
-  return {
-    sessionId,
-    capturedAt: capturedAt || now,
-    processedAt: now,
-    source: "mock",
-    faces: [face],
-    aggregated: {
-      emotion: face.emotion,
-      deepfake: face.deepfake,
-      trustScore,
-      confidenceLayers: {
-        audio: audioConf,
-        video: authenticityScore,
-        behavior: behaviorConf,
-      },
-    },
-  };
-}
-
 /* ------------------------------------------------------------------ */
-/*  Real HTTP call to AI service                                       */
+/*  HTTP fetch helper                                                   */
 /* ------------------------------------------------------------------ */
 
 let _fetchFn = null;
 
 async function getFetch() {
   if (_fetchFn) return _fetchFn;
-  // Node 18+ has global fetch; fallback handled gracefully.
   if (typeof globalThis.fetch === "function") {
     _fetchFn = globalThis.fetch;
     return _fetchFn;
@@ -101,36 +32,40 @@ async function getFetch() {
   return _fetchFn;
 }
 
+function buildHeaders() {
+  const headers = { "Content-Type": "application/json" };
+  if (AI_API_KEY) headers["X-API-Key"] = AI_API_KEY;
+  return headers;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Frame analysis                                                      */
+/* ------------------------------------------------------------------ */
+
 /**
  * POST a video frame to the AI Inference Service.
- *
- * @param {{ sessionId: string, frameB64: string, capturedAt?: string }} payload
- * @returns {Promise<object>} Analysis result matching ai-inference.schema.json
+ * Returns null if the service is unavailable.
  */
 async function analyzeFrame({ sessionId, frameB64, capturedAt }) {
   const fetchImpl = await getFetch();
   if (!fetchImpl) {
-    log.warn("aiClient", "No fetch implementation — returning mock.");
-    return generateMockResponse(sessionId, capturedAt);
+    log.warn("aiClient", "No fetch implementation — AI service unavailable.");
+    return null;
   }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS);
 
   try {
-    const headers = { "Content-Type": "application/json" };
-    if (AI_API_KEY) headers["X-API-Key"] = AI_API_KEY;
-
     const res = await fetchImpl(`${AI_SERVICE_URL}/api/analyze/frame`, {
       method: "POST",
-      headers,
+      headers: buildHeaders(),
       body: JSON.stringify({ sessionId, frameB64, capturedAt }),
       signal: controller.signal,
     });
 
     if (!res.ok) {
       if (res.status === 429) {
-        // AI service is busy — wait briefly and retry once
         log.debug("aiClient", "AI service busy (429) — retrying in 1.5s");
         await new Promise((r) => setTimeout(r, 1500));
         const retryController = new AbortController();
@@ -138,37 +73,37 @@ async function analyzeFrame({ sessionId, frameB64, capturedAt }) {
         try {
           const retryRes = await fetchImpl(`${AI_SERVICE_URL}/api/analyze/frame`, {
             method: "POST",
-            headers,
+            headers: buildHeaders(),
             body: JSON.stringify({ sessionId, frameB64, capturedAt }),
             signal: retryController.signal,
           });
           if (retryRes.ok) return await retryRes.json();
-        } catch (_) { /* retry failed — give up */ } finally {
+        } catch (_) { /* retry failed */ } finally {
           clearTimeout(retryTimer);
         }
         return null;
       }
-      log.error("aiClient", `AI service responded ${res.status} — returning mock. Start AI service on ${AI_SERVICE_URL}`);
-      return generateMockResponse(sessionId, capturedAt);
+      log.error("aiClient", `AI service responded ${res.status}. Is it running on ${AI_SERVICE_URL}?`);
+      return null;
     }
 
     return await res.json();
   } catch (err) {
     if (err?.name === "AbortError") {
-      log.error("aiClient", `AI service timed out (${ANALYZE_TIMEOUT_MS}ms) — returning mock.`);
+      log.error("aiClient", `AI service timed out (${ANALYZE_TIMEOUT_MS}ms).`);
     } else {
-      log.error("aiClient", `AI service unreachable at ${AI_SERVICE_URL} (${err?.message ?? err}) — returning mock. Is the AI service running?`);
+      log.error("aiClient", `AI service unreachable at ${AI_SERVICE_URL} (${err?.message ?? err}).`);
     }
-    return generateMockResponse(sessionId, capturedAt);
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-/**
- * Health-check the AI service.
- * @returns {Promise<{ok: boolean, models?: object}>}
- */
+/* ------------------------------------------------------------------ */
+/*  Health check                                                        */
+/* ------------------------------------------------------------------ */
+
 async function checkHealth() {
   const fetchImpl = await getFetch();
   if (!fetchImpl) return { ok: false, reason: "no fetch" };
@@ -177,12 +112,9 @@ async function checkHealth() {
   const timer = setTimeout(() => controller.abort(), 3000);
 
   try {
-    const healthHeaders = {};
-    if (AI_API_KEY) healthHeaders["X-API-Key"] = AI_API_KEY;
-
     const res = await fetchImpl(`${AI_SERVICE_URL}/api/health`, {
       method: "GET",
-      headers: healthHeaders,
+      headers: AI_API_KEY ? { "X-API-Key": AI_API_KEY } : {},
       signal: controller.signal,
     });
     if (!res.ok) return { ok: false, reason: `status ${res.status}` };
@@ -194,126 +126,74 @@ async function checkHealth() {
   }
 }
 
-/**
- * POST an audio chunk to the AI Inference Service for deepfake detection.
- *
- * @param {{ sessionId: string, audioB64: string, durationMs: number }} payload
- * @returns {Promise<object>} Audio analysis result
- */
+/* ------------------------------------------------------------------ */
+/*  Audio analysis                                                      */
+/* ------------------------------------------------------------------ */
+
 async function analyzeAudio({ sessionId, audioB64, durationMs }) {
   const fetchImpl = await getFetch();
-  if (!fetchImpl) {
-    log.warn("aiClient", "No fetch implementation — returning audio mock.");
-    return {
-      sessionId,
-      processedAt: new Date().toISOString(),
-      audio: { authenticityScore: 0.92, riskLevel: "low", model: "AASIST" },
-    };
-  }
+  if (!fetchImpl) return null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS);
 
   try {
-    const headers = { "Content-Type": "application/json" };
-    if (AI_API_KEY) headers["X-API-Key"] = AI_API_KEY;
-
     const res = await fetchImpl(`${AI_SERVICE_URL}/api/analyze/audio`, {
       method: "POST",
-      headers,
+      headers: buildHeaders(),
       body: JSON.stringify({ sessionId, audioB64, durationMs }),
       signal: controller.signal,
     });
 
     if (!res.ok) {
-      log.warn("aiClient", `AI audio service responded ${res.status} — returning mock.`);
-      return {
-        sessionId,
-        processedAt: new Date().toISOString(),
-        audio: { authenticityScore: 0.92, riskLevel: "low", model: "AASIST" },
-      };
+      log.warn("aiClient", `AI audio service responded ${res.status}.`);
+      return null;
     }
-
     return await res.json();
   } catch (err) {
-    if (err?.name === "AbortError") {
-      log.warn("aiClient", "AI audio service timed out — returning mock.");
-    } else {
-      log.warn("aiClient", `AI audio service unreachable (${err?.message ?? err}) — returning mock.`);
-    }
-    return {
-      sessionId,
-      processedAt: new Date().toISOString(),
-      audio: { authenticityScore: 0.92, riskLevel: "low", model: "AASIST" },
-    };
+    log.warn("aiClient", `AI audio service error: ${err?.message ?? err}`);
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-/**
- * POST text to the AI Inference Service for behavioral / NLI analysis.
- *
- * @param {{ sessionId: string, text: string }} payload
- * @returns {Promise<object>} Text analysis result
- */
+/* ------------------------------------------------------------------ */
+/*  Text analysis                                                       */
+/* ------------------------------------------------------------------ */
+
 async function analyzeText({ sessionId, text }) {
   const fetchImpl = await getFetch();
-  if (!fetchImpl) {
-    log.warn("aiClient", "No fetch implementation — returning text mock.");
-    return {
-      sessionId,
-      processedAt: new Date().toISOString(),
-      behavioral: { signals: [], highestScore: 0.0, model: "DeBERTa-v3-NLI" },
-    };
-  }
+  if (!fetchImpl) return null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS);
 
   try {
-    const headers = { "Content-Type": "application/json" };
-    if (AI_API_KEY) headers["X-API-Key"] = AI_API_KEY;
-
     const res = await fetchImpl(`${AI_SERVICE_URL}/api/analyze/text`, {
       method: "POST",
-      headers,
+      headers: buildHeaders(),
       body: JSON.stringify({ sessionId, text }),
       signal: controller.signal,
     });
 
     if (!res.ok) {
-      log.warn("aiClient", `AI text service responded ${res.status} — returning mock.`);
-      return {
-        sessionId,
-        processedAt: new Date().toISOString(),
-        behavioral: { signals: [], highestScore: 0.0, model: "DeBERTa-v3-NLI" },
-      };
+      log.warn("aiClient", `AI text service responded ${res.status}.`);
+      return null;
     }
-
     return await res.json();
   } catch (err) {
-    if (err?.name === "AbortError") {
-      log.warn("aiClient", "AI text service timed out — returning mock.");
-    } else {
-      log.warn("aiClient", `AI text service unreachable (${err?.message ?? err}) — returning mock.`);
-    }
-    return {
-      sessionId,
-      processedAt: new Date().toISOString(),
-      behavioral: { signals: [], highestScore: 0.0, model: "DeBERTa-v3-NLI" },
-    };
+    log.warn("aiClient", `AI text service error: ${err?.message ?? err}`);
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-/**
- * POST audio to the AI Inference Service for Whisper transcription.
- *
- * @param {{ sessionId: string, audioB64: string, durationMs?: number }} payload
- * @returns {Promise<object|null>} Transcription result or null on failure
- */
+/* ------------------------------------------------------------------ */
+/*  Whisper transcription                                               */
+/* ------------------------------------------------------------------ */
+
 async function transcribeAudio({ sessionId, audioB64, durationMs }) {
   const fetchImpl = await getFetch();
   if (!fetchImpl) return null;
@@ -322,12 +202,9 @@ async function transcribeAudio({ sessionId, audioB64, durationMs }) {
   const timer = setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS);
 
   try {
-    const headers = { "Content-Type": "application/json" };
-    if (AI_API_KEY) headers["X-API-Key"] = AI_API_KEY;
-
     const res = await fetchImpl(`${AI_SERVICE_URL}/api/transcribe`, {
       method: "POST",
-      headers,
+      headers: buildHeaders(),
       body: JSON.stringify({ sessionId, audioB64, durationMs }),
       signal: controller.signal,
     });
@@ -336,10 +213,8 @@ async function transcribeAudio({ sessionId, audioB64, durationMs }) {
       log.warn("aiClient", `Whisper transcribe responded ${res.status}`);
       return null;
     }
-
     return await res.json();
-  } catch (err) {
-    // Silent failure — transcription is supplementary
+  } catch {
     return null;
   } finally {
     clearTimeout(timer);
@@ -352,6 +227,4 @@ module.exports = {
   analyzeText,
   transcribeAudio,
   checkHealth,
-  // Exposed for testing
-  _generateMockResponse: generateMockResponse,
 };

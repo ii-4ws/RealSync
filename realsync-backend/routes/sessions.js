@@ -12,7 +12,6 @@ const {
   rehydrateSession,
   broadcastToSession,
   deriveMetrics,
-  generateSimulatedMetrics,
   getLatestSessionForUser,
   makeIso,
 } = require("../services/sessionManager");
@@ -232,7 +231,7 @@ router.get("/api/metrics", (req, res) => {
   if (latestSession) {
     return res.json(latestSession.metrics);
   }
-  return res.json(generateSimulatedMetrics());
+  return res.json({ source: "pending", trustScore: null, deepfake: null, emotion: null });
 });
 
 /* ------------------------------------------------------------------ */

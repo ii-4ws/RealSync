@@ -14,44 +14,13 @@ function safeRequire(moduleName) {
   }
 }
 
-function createStubStream({ onTranscript }) {
-  // Lightweight stub so the UI can be exercised without cloud creds.
-  // Enable real GCP STT with: REALSYNC_USE_GCP_STT=1
-  let timer = null;
-  const samples = [
-    "hello everyone, let's start the meeting",
-    "please share the report by end of day",
-    "let's review the project timeline now",
-    "can you confirm the schedule for next week",
-  ];
-
-  const start = () => {
-    if (timer) return;
-    let i = 0;
-    timer = setInterval(() => {
-      const text = samples[i % samples.length];
-      i += 1;
-      onTranscript?.({
-        text,
-        isFinal: true,
-        confidence: 0.8,
-        ts: new Date().toISOString(),
-        source: "stub",
-      });
-    }, 6000);
-  };
-
-  start();
-
+function createNoopStream() {
+  // Silent no-op when GCP STT is not configured.
+  // No fake transcripts generated — enable real GCP STT with: REALSYNC_USE_GCP_STT=1
   return {
     enabled: false,
-    write() {
-      // ignore audio bytes
-    },
-    end() {
-      if (timer) clearInterval(timer);
-      timer = null;
-    },
+    write() {},
+    end() {},
   };
 }
 
@@ -59,7 +28,7 @@ function createGcpStream({ onTranscript, onError, languageCode, sampleRateHertz 
   const speech = safeRequire("@google-cloud/speech");
   if (!speech) {
     log.warn("gcpStt", "GCP Speech client not installed. Run: npm i @google-cloud/speech (backend). Falling back to stub.");
-    return createStubStream({ onTranscript });
+    return createNoopStream();
   }
 
   let client;
@@ -67,7 +36,7 @@ function createGcpStream({ onTranscript, onError, languageCode, sampleRateHertz 
     client = new speech.SpeechClient();
   } catch (err) {
     log.warn("gcpStt", `Failed to init GCP SpeechClient (${err?.message ?? err}). Falling back to stub.`);
-    return createStubStream({ onTranscript });
+    return createNoopStream();
   }
 
   const recognizeStream = client
@@ -118,7 +87,7 @@ function createGcpStream({ onTranscript, onError, languageCode, sampleRateHertz 
 
 function createSttStream(opts) {
   if (!isGcpEnabled()) {
-    return createStubStream(opts);
+    return createNoopStream();
   }
   return createGcpStream(opts);
 }

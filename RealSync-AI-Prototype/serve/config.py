@@ -11,9 +11,6 @@ HOST = os.getenv("HOST", "0.0.0.0")
 SRC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src")
 MODELS_DIR = os.path.join(SRC_DIR, "models")
 
-# --- CLIP Deepfake Detection ---
-CLIP_DEEPFAKE_ENABLED = True
-
 # --- Emotion Model ---
 EMOTION_INPUT_SIZE = 128
 EMOTION_WEIGHTS_PATH = os.path.join(MODELS_DIR, "emotion_weights.pth")

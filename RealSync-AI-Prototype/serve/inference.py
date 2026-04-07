@@ -37,6 +37,7 @@ from serve.config import (
     NO_FACE_COUNTER_MAX,
     NO_FACE_EVICT_BATCH,
     TEMPORAL_SMOOTHING_MIN_FRAMES,
+    TEMPORAL_WINDOW_SIZE,
     INFERENCE_TIMEOUT_S,
     ENSEMBLE_WEIGHT_CLIP,
     ENSEMBLE_WEIGHT_FREQUENCY,
@@ -55,7 +56,7 @@ from serve.boundary_analyzer import analyze_boundary
 # ---------------------------------------------------------------
 
 _inference_pool = ThreadPoolExecutor(max_workers=2)
-_temporal_analyzer = TemporalAnalyzer(window_size=15)
+_temporal_analyzer = TemporalAnalyzer(window_size=TEMPORAL_WINDOW_SIZE)
 _sprt = SPRTDetector()
 
 _no_face_counters: Dict[str, int] = {}

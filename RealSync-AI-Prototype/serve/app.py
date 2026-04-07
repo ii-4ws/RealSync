@@ -44,7 +44,7 @@ def _rate_limit_key(request: Request) -> str:
 
 limiter = Limiter(key_func=_rate_limit_key)
 
-from serve.inference import analyze_frame, cleanup_session, _utcnow_iso, _get_face_detector
+from serve.inference import analyze_frame, _utcnow_iso, _get_face_detector
 from serve.clip_deepfake_model import get_clip_deepfake_model
 from serve.emotion_model import get_emotion_model
 from serve.audio_model import get_audio_model, predict_audio
@@ -67,7 +67,6 @@ elif not AI_API_KEY:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Pre-load all models and warm up on startup."""
-    print("[app] WARNING: AI_API_KEY not set — auth is disabled (dev mode)")
     print("[app] Pre-loading models...")
 
     face_det = _get_face_detector()
@@ -256,7 +255,7 @@ async def analyze_audio_endpoint(request: Request, payload: AnalyzeAudioRequest)
     if not payload.sessionId or not _UUID_RE.match(payload.sessionId):
         raise HTTPException(status_code=400, detail="sessionId must be a valid UUID")
     if len(payload.audioB64 or "") > 5_000_000:
-        raise HTTPException(status_code=413, detail="audioB64 payload exceeds 4MB limit")
+        raise HTTPException(status_code=413, detail="audioB64 payload exceeds 5MB limit")
 
     try:
         result = await asyncio.wait_for(

@@ -29,7 +29,7 @@ const PUPPETEER_TIMEOUT_MS = 120_000; // I5: 120s to get into the meeting (Puppe
 const FRAME_INTERVAL_MS = 1500; // 1 frame every 1.5s (~0.67 FPS)
 const CAPTION_POLL_MS = 1000; // check captions every 1s
 const AUDIO_CHUNK_MS = 500; // send audio chunks every 500ms
-const VIEWPORT = { width: 1280, height: 720 };
+const VIEWPORT = { width: 1920, height: 1080 };
 
 // Debug screenshots directory (only used when DEBUG_SCREENSHOTS=true)
 const SCREENSHOTS_DIR = path.join(__dirname, "screenshots");

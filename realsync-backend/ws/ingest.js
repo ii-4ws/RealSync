@@ -84,14 +84,14 @@ function processIngestMessage(session, message) {
 
   } else if (message.type === "bot_fallback") {
     log.warn("ingest", `Bot fallback for session ${session.id}: ${message.reason} — ${message.message}`);
-    session.source = "simulated";
+    session.source = "error";
     broadcastToSession(session.id, {
       type: "alert",
       alertId: `bot-fallback-${Date.now()}`,
       severity: "high",
       category: "system",
       title: "Bot Connection Failed",
-      message: String(message.message || "Real bot could not join. Using simulated data — captions and analysis are NOT from the actual meeting.").slice(0, 500),
+      message: String(message.message || "Bot could not join the meeting. No analysis available until the bot connects.").slice(0, 500),
       recommendation: "Check the Zoom meeting URL and try again.",
       source: "system",
       ts: message.ts || makeIso(),
@@ -313,18 +313,17 @@ function attachIngestHandler(wssIngest) {
         return;
       }
 
-      // Bot fallback notification — real bot failed, now using stub
+      // Bot fallback notification — real bot failed
       if (message.type === "bot_fallback") {
         log.warn("ingest", `Bot fallback for session ${session.id}: ${message.reason} — ${message.message}`);
-        session.source = "simulated";
+        session.source = "error";
         broadcastToSession(session.id, {
           type: "alert",
           alertId: `bot-fallback-${Date.now()}`,
           severity: "high",
           category: "system",
           title: "Bot Connection Failed",
-          // I9: Truncate user-facing fallback message to prevent oversized broadcasts
-          message: String(message.message || "Real bot could not join. Using simulated data — captions and analysis are NOT from the actual meeting.").slice(0, 500),
+          message: String(message.message || "Bot could not join the meeting. No analysis available until the bot connects.").slice(0, 500),
           recommendation: "Check the Zoom meeting URL and try again.",
           source: "system",
           ts: message.ts || makeIso(),

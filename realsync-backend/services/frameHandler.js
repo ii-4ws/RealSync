@@ -72,32 +72,14 @@ async function handleFrame(session, message) {
       return;
     }
 
-    // Update session metrics from AI response
-    const isMock = result.source === "mock";
+    // Update session metrics from real AI response
     session.metrics = {
       ...result.aggregated,
       timestamp: result.processedAt || makeIso(),
-      source: isMock ? "simulated" : "external",
+      source: "external",
       analyzedParticipant: primaryName,
     };
-    session.source = isMock ? "simulated" : "external";
-
-    // Alert frontend when AI service is down (throttle to once per 30s)
-    if (isMock && (!session._lastMockAlertAt || Date.now() - session._lastMockAlertAt > 30000)) {
-      session._lastMockAlertAt = Date.now();
-      broadcastToSession(session.id, {
-        type: "alert",
-        alertId: `ai-offline-${Date.now()}`,
-        severity: "high",
-        category: "system",
-        title: "AI Service Offline",
-        message: "The AI model server is unreachable. Displayed metrics are simulated and NOT real analysis. Start the AI service to get real results.",
-        recommendation: "Run the AI service: cd RealSync-AI-Prototype && python -m serve.app",
-        source: "system",
-        ts: makeIso(),
-        sessionId: session.id,
-      });
-    }
+    session.source = "external";
 
     // H7: Broadcast moved AFTER trust recomputation (below) so clients get audio-corrected trust
 

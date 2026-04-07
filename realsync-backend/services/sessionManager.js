@@ -24,68 +24,17 @@ const toFixedNumber = (value, digits = 4) =>
 const sessions = new Map();
 
 /* ------------------------------------------------------------------ */
-/*  Simulated metrics generator                                         */
+/*  Initial empty metrics (no simulated data)                           */
 /* ------------------------------------------------------------------ */
 
-const generateSimulatedMetrics = () => {
-  const now = new Date();
-  const phase = now.getTime() / 1000;
-
-  const wave = (speed, offset = 0) =>
-    (Math.sin(phase / speed + offset) + 1) / 2;
-
-  const dominantIndex = Math.min(
-    EMOTIONS.length - 1,
-    Math.floor(wave(9, 1.3) * EMOTIONS.length)
-  );
-
-  const weights = EMOTIONS.map((_, index) => 0.35 + 0.65 * wave(7, index));
-  weights[dominantIndex] += 1.25;
-
-  const weightSum = weights.reduce((sum, value) => sum + value, 0);
-  const scores = EMOTIONS.reduce((acc, label, index) => {
-    acc[label] = toFixedNumber(weights[index] / weightSum);
-    return acc;
-  }, {});
-
-  const emotionLabel = EMOTIONS[dominantIndex];
-  const emotionConfidence = scores[emotionLabel];
-
-  const authenticityScore = clamp(0.82 + 0.16 * wave(8, 0.7), 0.55, 0.98);
-  const deepfakeRisk =
-    authenticityScore > 0.85 ? "low" : authenticityScore > 0.7 ? "medium" : "high";
-
-  const audioConfidence = clamp(0.9 + 0.08 * wave(5, 0.4), 0.7, 0.99);
-  const videoConfidence = clamp(authenticityScore + 0.03 * wave(4, 1.1), 0.6, 0.99);
-  const behaviorConfidence = clamp(0.55 + emotionConfidence * 0.4, 0.5, 0.95);
-
-  const trustScore = clamp(
-    (authenticityScore + audioConfidence + videoConfidence + behaviorConfidence) / 4,
-    0,
-    1
-  );
-
-  return {
-    timestamp: now.toISOString(),
-    source: "simulated",
-    emotion: {
-      label: emotionLabel,
-      confidence: toFixedNumber(emotionConfidence),
-      scores,
-    },
-    deepfake: {
-      authenticityScore: toFixedNumber(authenticityScore),
-      model: "XceptionNet + EfficientNet (simulated)",
-      riskLevel: deepfakeRisk,
-    },
-    trustScore: toFixedNumber(trustScore),
-    confidenceLayers: {
-      audio: toFixedNumber(audioConfidence),
-      video: toFixedNumber(videoConfidence),
-      behavior: toFixedNumber(behaviorConfidence),
-    },
-  };
-};
+const createEmptyMetrics = () => ({
+  timestamp: makeIso(),
+  source: "pending",
+  emotion: null,
+  deepfake: null,
+  trustScore: null,
+  confidenceLayers: { audio: null, video: null, behavior: null },
+});
 
 /* ------------------------------------------------------------------ */
 /*  Metrics derivation                                                  */
@@ -160,8 +109,8 @@ const createSession = ({ title, meetingType, meetingUrl = null, userId = null })
     meetingTypeManual: MEETING_TYPES.includes(meetingType) ? meetingType : null,
     meetingTypeAuto: { label: null, confidence: 0, scores: null },
     meetingUrl: meetingUrl || null,
-    metrics: generateSimulatedMetrics(),
-    source: "simulated",
+    metrics: createEmptyMetrics(),
+    source: "pending",
     subscribers: new Set(),
     frameSnapshotCounter: 0,
     suggestionState: {
@@ -247,8 +196,8 @@ async function _rehydrateSessionInner(sessionId) {
     meetingTypeManual: dbSession.meeting_type || null,
     meetingTypeAuto: { label: null, confidence: 0, scores: null },
     meetingUrl: dbSession.meeting_url || null,
-    metrics: generateSimulatedMetrics(),
-    source: "simulated",
+    metrics: createEmptyMetrics(),
+    source: "pending",
     subscribers: new Set(),
     frameSnapshotCounter: 0,
     suggestionState: { fired: new Map(), lastMeetingTypeNoticeAt: 0 },
@@ -316,7 +265,6 @@ module.exports = {
   makeIso,
   clamp,
   toFixedNumber,
-  generateSimulatedMetrics,
   deriveMetrics,
   createSession,
   getSession,

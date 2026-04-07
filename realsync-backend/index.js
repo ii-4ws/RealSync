@@ -16,7 +16,7 @@ if (process.env.NODE_ENV === "production" && (!process.env.SUPABASE_URL || !proc
 const { authenticate } = require("./lib/auth");
 const botManager = require("./bot/botManager");
 const log = require("./lib/logger");
-const { sessions, generateSimulatedMetrics, broadcastToSession, makeIso } = require("./services/sessionManager");
+const { sessions, broadcastToSession, makeIso } = require("./services/sessionManager");
 const { frameInFlight } = require("./services/frameHandler");
 const { attachSubscribeHandler } = require("./ws/subscribe");
 const { attachIngestHandler } = require("./ws/ingest");
@@ -149,13 +149,13 @@ const ensureBroadcastLoop = () => {
   broadcastInterval = setInterval(() => {
     sessions.forEach((session) => {
       if (session.endedAt) return;
-      if (session.source !== "external" && session.botStatus !== "connected" && session.botStatus !== "joining") {
-        session.metrics = generateSimulatedMetrics();
+      // Only broadcast real metrics — never generate simulated data
+      if (session.metrics) {
+        broadcastToSession(session.id, {
+          type: "metrics",
+          data: session.metrics,
+        });
       }
-      broadcastToSession(session.id, {
-        type: "metrics",
-        data: session.metrics,
-      });
     });
   }, 1500);
 };
