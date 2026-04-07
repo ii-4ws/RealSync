@@ -294,6 +294,8 @@ async def analyze_text_endpoint(request: Request, payload: AnalyzeTextRequest):
         raise HTTPException(status_code=400, detail="text is required")
     if not payload.sessionId or not _UUID_RE.match(payload.sessionId):
         raise HTTPException(status_code=400, detail="sessionId must be a valid UUID")
+    if len(payload.text) > 50_000:
+        raise HTTPException(status_code=413, detail="text payload exceeds 50KB limit")
 
     try:
         result = await asyncio.wait_for(
