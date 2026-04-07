@@ -265,12 +265,13 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = 
         boundary_score = boundary_result["boundaryScore"]
 
         if clip_score is not None:
+            # Adaptive: if frequency has no signal (Zoom compression kills it),
+            # redistribute its weight to CLIP (70%) and boundary (30%)
             if freq_score < 0.01:
-                # Frequency analyzer is dead on compressed video — redistribute weight
-                total_weight = ENSEMBLE_WEIGHT_CLIP + ENSEMBLE_WEIGHT_BOUNDARY
+                eff_clip_w = ENSEMBLE_WEIGHT_CLIP + ENSEMBLE_WEIGHT_FREQUENCY * 0.70
+                eff_bnd_w = ENSEMBLE_WEIGHT_BOUNDARY + ENSEMBLE_WEIGHT_FREQUENCY * 0.30
                 ensemble_score = round(
-                    (ENSEMBLE_WEIGHT_CLIP / total_weight) * clip_score
-                    + (ENSEMBLE_WEIGHT_BOUNDARY / total_weight) * boundary_score,
+                    eff_clip_w * clip_score + eff_bnd_w * boundary_score,
                     4,
                 )
             else:
@@ -344,11 +345,7 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = 
 
     processed_at = _utcnow_iso()
     elapsed_ms = round((time.time() - start_time) * 1000, 1)
-    ens_score = primary["deepfake"]["authenticityScore"] or 0
-    clip_s = primary["deepfake"].get("components", {}).get("clip", {}).get("authenticityScore", 0) or 0
-    print(f"[inference] Frame analyzed in {elapsed_ms}ms — {len(faces)} face(s), "
-          f"SPRT: {sprt_result['decision']} "
-          f"(clip={clip_s:.2f} ens={ens_score:.2f})")
+    print(f"[inference] Frame analyzed in {elapsed_ms}ms — {len(faces)} face(s), SPRT: {sprt_result['decision']}")
 
     return {
         "sessionId": session_id,
