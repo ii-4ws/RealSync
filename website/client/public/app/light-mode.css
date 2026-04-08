@@ -1,0 +1,139 @@
+/* ═══════════════════════════════════════════════════════════════════
+   LIGHT MODE OVERRIDES  —  RealSync
+   Applied when <html> does NOT carry the .dark class.
+   This file lives in public/ so Vite serves it as-is (no PostCSS).
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Remap Tailwind gray palette via CSS custom properties ──
+   Tailwind v4 utilities like bg-gray-800 resolve to var(--color-gray-800).
+   By overriding these variables we flip the gray scale for light mode
+   without touching any component files.                              */
+html:not(.dark) {
+  --color-gray-300: #374151;   /* body text (was light #d1d5db) */
+  --color-gray-400: #4b5563;   /* secondary text (was #9ca3af)  */
+  --color-gray-500: #6b7280;   /* muted text (stays medium)     */
+  --color-gray-600: #9ca3af;   /* very muted (was #4b5563)      */
+  --color-gray-700: #d1d5db;   /* borders (was dark #374151)    */
+  --color-gray-800: #e5e7eb;   /* subtle bg/borders (was #1f2937) */
+  color-scheme: light;
+}
+
+/* ── 2. Arbitrary-value backgrounds ──
+   Classes like bg-[#0f0f1e] compile to hardcoded hex values,
+   so we must override each with an explicit selector.              */
+html:not(.dark) .bg-\[\#0a0a14\]     { background-color: #F1F5F9 !important; }
+html:not(.dark) .bg-\[\#0a0a14\]\/95 { background-color: rgba(241, 245, 249, 0.95) !important; }
+html:not(.dark) .bg-\[\#0f0f1e\]     { background-color: #F8FAFC !important; }
+html:not(.dark) .bg-\[\#1a1a2e\]     { background-color: #FFFFFF !important; }
+html:not(.dark) .bg-\[\#1a1a2e\]\/80 { background-color: rgba(255, 255, 255, 0.92) !important; }
+html:not(.dark) .bg-\[\#2a2a3e\]     { background-color: #F3F4F6 !important; }
+html:not(.dark) .bg-\[\#141427\]     { background-color: #F1F5F9 !important; }
+
+/* ── 3. Text-white → dark text on light backgrounds ── */
+html:not(.dark) .text-white {
+  color: #111827 !important;
+}
+html:not(.dark) .text-white\/70 {
+  color: rgba(17, 24, 39, 0.7) !important;
+}
+html:not(.dark) .hover\:text-white:hover {
+  color: #111827 !important;
+}
+
+/* ── 3a. Preserve white text on branded / coloured surfaces ── */
+html:not(.dark) .bg-blue-600 .text-white,
+html:not(.dark) .bg-blue-600.text-white,
+html:not(.dark) .bg-blue-600 .hover\:text-white:hover,
+html:not(.dark) [class*="from-cyan"] .text-white,
+html:not(.dark) [class*="from-cyan"].text-white,
+html:not(.dark) [class*="from-cyan"] .hover\:text-white:hover,
+html:not(.dark) [class*="from-blue"] .text-white,
+html:not(.dark) [class*="from-blue"].text-white,
+html:not(.dark) [class*="from-blue"] .hover\:text-white:hover,
+html:not(.dark) [style*="gradient"] .text-white,
+html:not(.dark) [style*="gradient"].text-white,
+html:not(.dark) [style*="background-color"] .text-white,
+html:not(.dark) [style*="background-color"].text-white,
+html:not(.dark) .bg-red-500 .text-white,
+html:not(.dark) .bg-green-500 .text-white,
+html:not(.dark) .bg-orange-500 .text-white {
+  color: #ffffff !important;
+}
+
+/* ── 4. Grid background pattern (login / signup pages) ── */
+html:not(.dark) [class*="bg-\[linear-gradient"] {
+  background-image:
+    linear-gradient(to right, #cbd5e1 1px, transparent 1px),
+    linear-gradient(to bottom, #cbd5e1 1px, transparent 1px) !important;
+}
+
+/* ── 5. Switch component ── */
+html:not(.dark) [role="switch"][data-state="checked"] {
+  background-color: #3B82F6 !important;
+  border-color: #3B82F6 !important;
+}
+html:not(.dark) [role="switch"][data-state="unchecked"] {
+  background-color: #D1D5DB !important;
+  border-color: #D1D5DB !important;
+}
+html:not(.dark) [role="switch"] > span {
+  background-color: #ffffff !important;
+}
+
+/* ── 6. Color-scheme override for native inputs ── */
+html:not(.dark) .\[color-scheme\:dark\] {
+  color-scheme: light !important;
+}
+
+/* ── 7. Scrollbar (light) ── */
+html:not(.dark) ::-webkit-scrollbar-track {
+  background: #f8fafc;
+}
+html:not(.dark) ::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+}
+html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* ── 8. Select / dropdown content ── */
+html:not(.dark) [data-radix-popper-content-wrapper] .bg-\[\#2a2a3e\] {
+  background-color: #FFFFFF !important;
+}
+html:not(.dark) [data-radix-popper-content-wrapper] .bg-\[\#1a1a2e\] {
+  background-color: #FFFFFF !important;
+}
+
+/* ── 9. Animated background blobs — soften for light mode ── */
+html:not(.dark) .bg-cyan-500\/20 {
+  background-color: rgba(34, 211, 238, 0.08) !important;
+}
+html:not(.dark) .bg-blue-500\/20 {
+  background-color: rgba(59, 130, 246, 0.08) !important;
+}
+html:not(.dark) .bg-orange-500\/10 {
+  background-color: rgba(249, 115, 22, 0.05) !important;
+}
+
+/* ── 10. FAQ accordion borders ── */
+html:not(.dark) .border-gray-800 {
+  border-color: #e5e7eb !important;
+}
+html:not(.dark) .border-gray-800\/50 {
+  border-color: rgba(229, 231, 235, 0.5) !important;
+}
+html:not(.dark) .border-gray-700 {
+  border-color: #d1d5db !important;
+}
+
+/* ── 11. Hover backgrounds ── */
+html:not(.dark) .hover\:bg-gray-800:hover {
+  background-color: #e5e7eb !important;
+}
+
+/* ── 12. Toaster / sonner overrides ── */
+html:not(.dark) [data-sonner-toaster] [data-sonner-toast] {
+  background-color: #FFFFFF !important;
+  color: #111827 !important;
+  border-color: #e5e7eb !important;
+}

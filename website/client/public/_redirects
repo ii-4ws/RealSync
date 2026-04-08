@@ -1,0 +1,5 @@
+# SPA fallback — rewrite all non-API routes to index.html
+# Cloudflare Pages Functions (/api/*) take priority over this rule
+/api/*     /api/:splat      200
+/app/*     /app/index.html  200
+/*         /index.html      200
