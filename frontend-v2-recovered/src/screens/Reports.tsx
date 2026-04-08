@@ -227,8 +227,7 @@ function ReportDetail({ report }: { report: ReportData }) {
 
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexShrink: 0 }}>
             <div style={{ display: 'flex', gap: isMobile ? 4 : 6, marginTop: 4, flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
-              <ExportBtn icon={File} label="PDF (v1)" onClick={() => downloadPdf(report)} />
-              <ExportBtn icon={File} label="PDF (v2)" onClick={() => downloadPdfV2(report)} />
+              <ExportBtn icon={File} label="PDF" onClick={() => downloadPdfV2(report)} />
               <ExportBtn icon={Database} label="CSV" onClick={() => downloadCsv(report)} />
               <ExportBtn icon={Download} label="JSON" onClick={() => downloadJson(report)} />
             </div>

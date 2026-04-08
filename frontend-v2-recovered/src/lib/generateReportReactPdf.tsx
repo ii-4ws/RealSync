@@ -238,8 +238,8 @@ const S = StyleSheet.create({
     gap: 12,
   },
   headerLogo: {
-    width: 100,
-    height: 35,
+    width: 160,
+    height: 56,
   },
   headerBadge: {
     borderWidth: 1,
