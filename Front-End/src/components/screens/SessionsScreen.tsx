@@ -441,69 +441,145 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
       const doc = new jsPDF() as JsPDFWithPlugin;
       const pageW = doc.internal.pageSize.getWidth();
       const pageH = doc.internal.pageSize.getHeight();
-      let y = 14;
+      const M = 14; // margin
+      let y = M;
 
-      doc.setFillColor(15, 15, 30);
-      doc.rect(0, 0, pageW, 38, 'F');
-      doc.setFillColor(34, 211, 238);
-      doc.rect(0, 38, pageW, 2, 'F');
+      // --- White background ---
+      doc.setFillColor(255, 255, 255);
+      doc.rect(0, 0, pageW, pageH, 'F');
 
-      doc.setFontSize(20);
+      // --- Header band (light gray) ---
+      doc.setFillColor(248, 250, 252);
+      doc.rect(0, 0, pageW, 42, 'F');
+      // Cyan top accent line
+      doc.setFillColor(14, 165, 233);
+      doc.rect(0, 0, pageW, 1.5, 'F');
+
+      // Brand name
+      doc.setFontSize(18);
       doc.setFont('helvetica', 'bold');
-      doc.setTextColor(34, 211, 238);
-      doc.text('RealSync', 14, y + 6);
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(160, 160, 175);
-      doc.text('AI-Powered Meeting Intelligence', 14, y + 12);
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(255, 255, 255);
-      doc.text('Meeting Analysis Report', pageW - 14, y + 6, { align: 'right' });
+      doc.setTextColor(15, 23, 42);
+      doc.text('RealSync', M, y + 10);
       doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
-      doc.setTextColor(160, 160, 175);
-      doc.text(`Generated: ${new Date().toLocaleString()}`, pageW - 14, y + 12, { align: 'right' });
+      doc.setTextColor(100, 116, 139);
+      doc.text('AI-Powered Meeting Intelligence', M, y + 17);
 
-      y = 50;
-
-      doc.setFontSize(13);
+      // Report type label (right)
+      doc.setFillColor(224, 242, 254);
+      doc.roundedRect(pageW - M - 54, 12, 54, 11, 1.5, 1.5, 'F');
+      doc.setFontSize(7.5);
       doc.setFont('helvetica', 'bold');
-      doc.setTextColor(34, 211, 238);
-      doc.text('Meeting Information', 14, y);
-      y += 2;
-      doc.setFillColor(34, 211, 238);
-      doc.rect(14, y, 40, 0.8, 'F');
-      y += 8;
+      doc.setTextColor(14, 165, 233);
+      doc.text('SECURITY AUDIT REPORT', pageW - M - 27, 19.5, { align: 'center' });
 
+      y = 52;
+
+      // Title
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(15, 23, 42);
+      doc.text('Meeting Authenticity Report', M, y);
+      y += 6;
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
-      const info: [string, string][] = [
-        ['Title', s.title || session.title],
-        ['Session ID', (s.sessionId || session.id).slice(0, 8)],
-        ['Date', new Date(s.createdAt || session.createdAt).toLocaleString()],
+      doc.setTextColor(14, 165, 233);
+      doc.text(s.title || session.title, M, y);
+      y += 7;
+
+      // Divider
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.3);
+      doc.line(M, y, pageW - M, y);
+      y += 8;
+
+      // Session info grid
+      const infoItems: [string, string][] = [
+        ['Session ID', (s.sessionId || session.id).slice(0, 8).toUpperCase()],
+        ['Date', new Date(s.createdAt || session.createdAt).toLocaleDateString()],
         ['Duration', formatDur(s.createdAt || session.createdAt, s.endedAt || session.endedAt)],
-        ['Meeting Type', (s.meetingType || session.meetingType || '--').charAt(0).toUpperCase() + (s.meetingType || session.meetingType || '--').slice(1)],
-        ['Overall Risk', overallRisk.toUpperCase()],
+        ['Meeting Type', (s.meetingType || session.meetingType || 'Standard').charAt(0).toUpperCase() + (s.meetingType || session.meetingType || 'Standard').slice(1)],
       ];
-      info.forEach(([label, val]) => {
-        doc.setTextColor(120, 120, 130);
-        doc.text(`${label}:`, 18, y);
-        if (label === 'Overall Risk') {
-          const riskColors: Record<string, [number, number, number]> = { critical: [239, 68, 68], high: [249, 115, 22], medium: [234, 179, 8], low: [34, 197, 94] };
-          const color = riskColors[overallRisk] || [255, 255, 255];
-          doc.setTextColor(color[0], color[1], color[2]);
-          doc.setFont('helvetica', 'bold');
-        } else {
-          doc.setTextColor(40, 40, 50);
-          doc.setFont('helvetica', 'normal');
-        }
-        doc.text(String(val), 65, y);
+      const colW2 = (pageW - M * 2) / infoItems.length;
+      infoItems.forEach(([label, val], i) => {
+        const cx = M + i * colW2;
         doc.setFont('helvetica', 'normal');
-        y += 6.5;
+        doc.setFontSize(7);
+        doc.setTextColor(100, 116, 139);
+        doc.text(label.toUpperCase(), cx, y);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(15, 23, 42);
+        doc.text(val, cx, y + 6);
+      });
+      y += 16;
+
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.3);
+      doc.line(M, y, pageW - M, y);
+      y += 10;
+
+      // Risk score + severity cards
+      const riskColors2: Record<string, [number, number, number]> = {
+        critical: [220, 38, 38], high: [234, 88, 12], medium: [217, 119, 6], low: [22, 163, 74],
+      };
+      const riskBgColors: Record<string, [number, number, number]> = {
+        critical: [254, 226, 226], high: [255, 237, 213], medium: [254, 243, 199], low: [220, 252, 231],
+      };
+      const scoreColor2 = riskColors2[overallRisk] || riskColors2.low;
+      const scoreBg2 = riskBgColors[overallRisk] || riskBgColors.low;
+
+      // Score box
+      doc.setFillColor(scoreBg2[0], scoreBg2[1], scoreBg2[2]);
+      doc.setDrawColor(scoreColor2[0], scoreColor2[1], scoreColor2[2]);
+      doc.setLineWidth(0.5);
+      doc.roundedRect(M, y, 55, 32, 2, 2, 'FD');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(scoreColor2[0], scoreColor2[1], scoreColor2[2]);
+      doc.text('OVERALL RISK', M + 27.5, y + 7, { align: 'center' });
+      doc.setFontSize(20);
+      doc.text(overallRisk.toUpperCase(), M + 27.5, y + 20, { align: 'center' });
+
+      // Severity cards
+      const sevCards = [
+        { label: 'Critical', count: breakdown.critical, color: riskColors2.critical },
+        { label: 'High', count: breakdown.high, color: riskColors2.high },
+        { label: 'Medium', count: breakdown.medium, color: riskColors2.medium },
+        { label: 'Low', count: breakdown.low, color: riskColors2.low },
+      ];
+      const cardW2 = (pageW - M * 2 - 61) / 4;
+      sevCards.forEach((card, i) => {
+        const cx = M + 61 + i * (cardW2 + 2);
+        doc.setFillColor(255, 255, 255);
+        doc.setDrawColor(226, 232, 240);
+        doc.setLineWidth(0.3);
+        doc.rect(cx, y, cardW2, 32, 'FD');
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(100, 116, 139);
+        doc.text(card.label.toUpperCase(), cx + 4, y + 8);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(16);
+        doc.setTextColor(
+          card.count > 0 ? card.color[0] : 100,
+          card.count > 0 ? card.color[1] : 116,
+          card.count > 0 ? card.color[2] : 139,
+        );
+        doc.text(String(card.count), cx + 4, y + 25);
       });
 
-      y += 6;
+      y += 40;
+
+      // Section: Severity breakdown table
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text('Severity Breakdown', M, y);
+      y += 2;
+      doc.setFillColor(14, 165, 233);
+      doc.rect(M, y, 3, 6, 'F');
+      y += 8;
 
       autoTable(doc, {
         startY: y,
@@ -516,24 +592,35 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
           ['Total', String(s.totalAlerts ?? alerts.length)],
         ],
         theme: 'grid',
-        headStyles: { fillColor: [15, 15, 30], textColor: [34, 211, 238], fontSize: 9, fontStyle: 'bold' },
-        styles: { fontSize: 9, cellPadding: 3 },
-        alternateRowStyles: { fillColor: [245, 247, 250] },
-        margin: { left: 18, right: 18 },
+        headStyles: { fillColor: [248, 250, 252], textColor: [15, 23, 42], fontSize: 8.5, fontStyle: 'bold', lineColor: [203, 213, 225], lineWidth: 0.3 },
+        styles: { fontSize: 8.5, cellPadding: 3, textColor: [51, 65, 85], lineColor: [226, 232, 240], lineWidth: 0.2 },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        margin: { left: M, right: M },
+        didParseCell: (data: CellHookData) => {
+          if (data.section === 'body' && data.column.index === 0) {
+            const raw = data.row.raw;
+            const sev = (Array.isArray(raw) ? String(raw[0] ?? '') : '').toLowerCase();
+            if (sev === 'critical') data.cell.styles.textColor = [220, 38, 38];
+            else if (sev === 'high') data.cell.styles.textColor = [234, 88, 12];
+            else if (sev === 'medium') data.cell.styles.textColor = [217, 119, 6];
+            else if (sev === 'low') data.cell.styles.textColor = [22, 163, 74];
+            else data.cell.styles.fontStyle = 'bold';
+          }
+        },
       });
 
       y = (doc.lastAutoTable?.finalY ?? y) + 12;
 
       if (alerts.length > 0) {
         if (y > 240) { doc.addPage(); y = 20; }
-        doc.setFontSize(13);
         doc.setFont('helvetica', 'bold');
-        doc.setTextColor(34, 211, 238);
-        doc.text('Alert Timeline', 14, y);
+        doc.setFontSize(11);
+        doc.setTextColor(15, 23, 42);
+        doc.text('Alert Timeline', M, y);
         y += 2;
-        doc.setFillColor(34, 211, 238);
-        doc.rect(14, y, 40, 0.8, 'F');
-        y += 6;
+        doc.setFillColor(14, 165, 233);
+        doc.rect(M, y, 3, 6, 'F');
+        y += 8;
 
         autoTable(doc, {
           startY: y,
@@ -543,22 +630,22 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
             a.severity.toUpperCase(),
             a.category,
             a.title,
-            a.message.length > 60 ? a.message.slice(0, 60) + '…' : a.message,
+            a.message.length > 60 ? a.message.slice(0, 60) + '...' : a.message,
           ]),
           theme: 'grid',
-          headStyles: { fillColor: [15, 15, 30], textColor: [34, 211, 238], fontSize: 8, fontStyle: 'bold' },
-          styles: { fontSize: 8, cellPadding: 2.5, cellWidth: 'wrap' },
-          alternateRowStyles: { fillColor: [245, 247, 250] },
+          headStyles: { fillColor: [248, 250, 252], textColor: [15, 23, 42], fontSize: 8, fontStyle: 'bold', lineColor: [203, 213, 225], lineWidth: 0.3 },
+          styles: { fontSize: 8, cellPadding: 2.5, textColor: [51, 65, 85], lineColor: [226, 232, 240], lineWidth: 0.2 },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
           columnStyles: { 4: { cellWidth: 55 } },
-          margin: { left: 14, right: 14 },
+          margin: { left: M, right: M },
           didParseCell: (data: CellHookData) => {
             if (data.section === 'body' && data.column.index === 1) {
               const raw = data.row.raw;
               const sev = (Array.isArray(raw) ? String(raw[1] ?? '') : '').toLowerCase();
-              if (sev === 'critical') data.cell.styles.textColor = [239, 68, 68];
-              else if (sev === 'high') data.cell.styles.textColor = [249, 115, 22];
-              else if (sev === 'medium') data.cell.styles.textColor = [234, 179, 8];
-              else data.cell.styles.textColor = [34, 197, 94];
+              if (sev === 'critical') data.cell.styles.textColor = [220, 38, 38];
+              else if (sev === 'high') data.cell.styles.textColor = [234, 88, 12];
+              else if (sev === 'medium') data.cell.styles.textColor = [217, 119, 6];
+              else data.cell.styles.textColor = [22, 163, 74];
             }
           },
         });
@@ -568,14 +655,14 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
 
       if (transcript.length > 0) {
         if (y > 240) { doc.addPage(); y = 20; }
-        doc.setFontSize(13);
         doc.setFont('helvetica', 'bold');
-        doc.setTextColor(34, 211, 238);
-        doc.text(`Transcript (${Math.min(transcript.length, 50)} of ${transcript.length} lines)`, 14, y);
+        doc.setFontSize(11);
+        doc.setTextColor(15, 23, 42);
+        doc.text(`Transcript (${Math.min(transcript.length, 50)} of ${transcript.length} lines)`, M, y);
         y += 2;
-        doc.setFillColor(34, 211, 238);
-        doc.rect(14, y, 40, 0.8, 'F');
-        y += 6;
+        doc.setFillColor(14, 165, 233);
+        doc.rect(M, y, 3, 6, 'F');
+        y += 8;
 
         autoTable(doc, {
           startY: y,
@@ -583,28 +670,39 @@ export function SessionsScreen({ onNavigate, onSignOut, profilePhoto, userName, 
           body: transcript.slice(0, 50).map((line) => [
             new Date(line.ts).toLocaleTimeString(),
             line.speaker || '--',
-            line.text.length > 80 ? line.text.slice(0, 80) + '…' : line.text,
+            line.text.length > 80 ? line.text.slice(0, 80) + '...' : line.text,
           ]),
-          theme: 'grid',
-          headStyles: { fillColor: [15, 15, 30], textColor: [34, 211, 238], fontSize: 8, fontStyle: 'bold' },
-          styles: { fontSize: 8, cellPadding: 2.5 },
-          alternateRowStyles: { fillColor: [245, 247, 250] },
+          theme: 'striped',
+          headStyles: { fillColor: [248, 250, 252], textColor: [15, 23, 42], fontSize: 8, fontStyle: 'bold', lineColor: [203, 213, 225], lineWidth: 0.3 },
+          styles: { fontSize: 8, cellPadding: 2.5, textColor: [51, 65, 85], lineColor: [226, 232, 240], lineWidth: 0.2 },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
           columnStyles: { 2: { cellWidth: 110 } },
-          margin: { left: 14, right: 14 },
+          margin: { left: M, right: M },
+          didParseCell: (data: CellHookData) => {
+            if (data.section === 'body' && data.column.index === 1) {
+              const raw = data.row.raw;
+              const speaker = Array.isArray(raw) ? String(raw[1] ?? '') : '';
+              if (speaker && speaker !== '--') {
+                data.cell.styles.textColor = [14, 165, 233];
+                data.cell.styles.fontStyle = 'bold';
+              }
+            }
+          },
         });
       }
 
       const totalPagesCount = doc.getNumberOfPages();
       for (let i = 1; i <= totalPagesCount; i++) {
         doc.setPage(i);
-        doc.setDrawColor(34, 211, 238);
-        doc.setLineWidth(0.5);
-        doc.line(14, pageH - 14, pageW - 14, pageH - 14);
+        doc.setDrawColor(203, 213, 225);
+        doc.setLineWidth(0.3);
+        doc.line(M, pageH - 14, pageW - M, pageH - 14);
         doc.setFontSize(7);
         doc.setFont('helvetica', 'normal');
-        doc.setTextColor(140, 140, 150);
-        doc.text('Generated by RealSync — AI-Powered Meeting Intelligence', 14, pageH - 8);
-        doc.text(`Page ${i} of ${totalPagesCount}`, pageW - 14, pageH - 8, { align: 'right' });
+        doc.setTextColor(100, 116, 139);
+        doc.text(`Generated by RealSync  |  Confidential`, M, pageH - 8);
+        doc.text(new Date().toLocaleString(), pageW / 2, pageH - 8, { align: 'center' });
+        doc.text(`Page ${i} of ${totalPagesCount}`, pageW - M, pageH - 8, { align: 'right' });
       }
 
       const sessionIdPrefix = (s.sessionId || session.id).slice(0, 8);
