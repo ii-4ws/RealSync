@@ -52,11 +52,11 @@ interface Participant {
 interface TrustPoint { t: string; score: number }
 
 const DEFAULT_METRICS: LiveMetrics = {
-  trustScore: 0.98,
-  emotion: { label: 'Happy', confidence: 0.92 },
-  deepfake: { authenticityScore: 0.96, riskLevel: 'low' },
-  confidenceLayers: { audio: 0.87, video: 0.97, behavior: 0.82 },
-  source: 'simulated',
+  trustScore: 0,
+  emotion: { label: 'Neutral', confidence: 0 },
+  deepfake: { authenticityScore: 0, riskLevel: undefined as unknown as RiskLevel },
+  confidenceLayers: { audio: 0, video: 0, behavior: 0 },
+  source: 'waiting',
   timestamp: new Date().toISOString(),
 }
 
@@ -198,7 +198,7 @@ export default function Dashboard() {
   const [alerts, setAlerts] = useState<LiveAlert[]>([])
   const [participants, setParticipants] = useState<Participant[]>([])
   const [timeline, setTimeline] = useState<TrustPoint[]>([])
-  const [dataSource, setDataSource] = useState<'simulated' | 'live'>('simulated')
+  const [dataSource, setDataSource] = useState<'waiting' | 'live'>('waiting')
 
   // Subscribe to WebSocket messages
   useWsMessages(useCallback((msg: Record<string, unknown>) => {
@@ -297,7 +297,7 @@ export default function Dashboard() {
       display: 'flex', alignItems: 'center', gap: 8,
     }}>
       <Zap size={13} color={$.cyan} />
-      No active session — showing simulated data. Go to Sessions to start monitoring a meeting.
+      No active session. Go to Sessions to start monitoring a meeting.
     </div>
   )
 
@@ -307,7 +307,7 @@ export default function Dashboard() {
         {!activeSession && (
           <div style={{ padding: '10px 12px', borderRadius: 10, background: 'rgba(34,211,238,0.06)', border: `1px solid ${$.cyan}22`, fontSize: 11, color: $.t3, display: 'flex', alignItems: 'center', gap: 8 }}>
             <Zap size={12} color={$.cyan} />
-            No active session — showing simulated data.
+            No active session.
           </div>
         )}
 

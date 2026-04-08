@@ -10,7 +10,7 @@ import {
 import $ from '../lib/tokens'
 import { EASE, LABEL_STYLE, MONO_STYLE, trustColor, SEVERITY_CONFIG } from '../lib/tokens'
 import type { AlertSeverity } from '../lib/mockData'
-import { REPORTS } from '../lib/mockData'
+// Mock data removed — reports always fetch from API
 import { authFetch } from '../lib/api'
 import { useSessionContext } from '../contexts/SessionContext'
 import { generateReport } from '../lib/generateReport'
@@ -389,8 +389,8 @@ export default function Reports() {
 
       if (!sessionsData.sessions || sessionsData.sessions.length === 0) {
         // No sessions yet — use mock data for demo
-        setReports(REPORTS as unknown as ReportData[])
-        setSelectedId(REPORTS[0].id)
+        setReports([])
+        setSelectedId('')
         setLoadingReports(false)
         return
       }
@@ -399,8 +399,8 @@ export default function Reports() {
       const completed = sessionsData.sessions.filter((s) => s.endedAt)
       if (completed.length === 0) {
         // No completed sessions — fall back to mock data
-        setReports(REPORTS as unknown as ReportData[])
-        setSelectedId(REPORTS[0].id)
+        setReports([])
+        setSelectedId('')
         setLoadingReports(false)
         return
       }
@@ -427,9 +427,9 @@ export default function Reports() {
         setSelectedId(liveReports[0].id)
       }
     } catch {
-      // API unavailable — fall back to mock data
-      setReports(REPORTS as unknown as ReportData[])
-      setSelectedId(REPORTS[0].id)
+      // API unavailable — show empty state
+      setReports([])
+      setSelectedId('')
     } finally {
       setLoadingReports(false)
     }
