@@ -6,6 +6,7 @@ import $ from '../lib/tokens'
 import { EASE, LABEL_STYLE } from '../lib/tokens'
 import { useSessionContext } from '../contexts/SessionContext'
 import { supabase } from '../lib/supabaseClient'
+import { authFetch } from '../lib/api'
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
 
@@ -270,6 +271,38 @@ function DetectionTab() {
   const [emotion, setEmotion] = useState(true)
   const [identity, setIdentity] = useState(true)
   const [sensitivity, setSensitivity] = useState<'low' | 'medium' | 'high'>('high')
+  const [savingDetection, setSavingDetection] = useState(false)
+  const [savedDetection, setSavedDetection] = useState(false)
+
+  // Load detection settings from backend on mount
+  useEffect(() => {
+    authFetch('/api/settings')
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: { facialAnalysis?: boolean; voicePattern?: boolean; emotionDetection?: boolean } | null) => {
+        if (!data) return
+        if (typeof data.facialAnalysis === 'boolean') setVisual(data.facialAnalysis)
+        if (typeof data.voicePattern === 'boolean') setAudio(data.voicePattern)
+        if (typeof data.emotionDetection === 'boolean') setEmotion(data.emotionDetection)
+      })
+      .catch(() => { /* API unavailable — use defaults */ })
+  }, [])
+
+  async function saveDetectionSettings() {
+    setSavingDetection(true)
+    try {
+      await authFetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ facialAnalysis: visual, voicePattern: audio, emotionDetection: emotion }),
+      })
+      setSavedDetection(true)
+      setTimeout(() => setSavedDetection(false), 2200)
+    } catch {
+      // Best-effort
+    } finally {
+      setSavingDetection(false)
+    }
+  }
 
   const SENS_OPTIONS = [
     { value: 'low', label: 'Low', color: $.blue },
@@ -298,7 +331,32 @@ function DetectionTab() {
           <ToggleRow label="Visual Deepfake Detection" description="Analyzes video stream for facial manipulation and neural synthesis artifacts" on={visual} onChange={setVisual} delay={0.1} />
           <ToggleRow label="Audio Manipulation Detection" description="Identifies voice cloning, audio splicing, and codec-level deepfake signals" on={audio} onChange={setAudio} delay={0.15} />
           <ToggleRow label="Emotion Analysis" description="Tracks micro-expression inconsistencies and behavioral pattern anomalies" on={emotion} onChange={setEmotion} delay={0.2} />
-          <ToggleRow label="Identity Verification" description="Continuous biometric cross-referencing against registered participant profiles" on={identity} onChange={setIdentity} delay={0.25} />
+          <ToggleRow label="Identity Verification" description="Continuous biometric cross-referencing against registered participant profiles (UI only)" on={identity} onChange={setIdentity} delay={0.25} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+          <motion.button
+            onClick={saveDetectionSettings} whileTap={{ scale: 0.97 }} disabled={savingDetection}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 7, padding: '9px 20px',
+              background: savedDetection ? 'rgba(16,185,129,0.12)' : 'rgba(34,211,238,0.1)',
+              border: `1px solid ${savedDetection ? $.green : $.cyan}`,
+              borderRadius: 10, color: savedDetection ? $.green : $.cyan, fontSize: 13,
+              fontWeight: 600, cursor: savingDetection ? 'wait' : 'pointer', fontFamily: 'Inter, sans-serif',
+              transition: 'all 200ms cubic-bezier(0.4,0,0.2,1)',
+              opacity: savingDetection ? 0.7 : 1,
+            }}
+          >
+            <AnimatePresence mode="wait">
+              {savedDetection
+                ? <motion.span key="saved" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <Check size={14} />Saved
+                  </motion.span>
+                : <motion.span key="save" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }}>
+                    {savingDetection ? 'Saving...' : 'Save Changes'}
+                  </motion.span>
+              }
+            </AnimatePresence>
+          </motion.button>
         </div>
       </SettingsCard>
 

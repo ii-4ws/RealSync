@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useLocation } from 'react-router-dom'
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts'
@@ -333,8 +334,32 @@ function ReportDetail({ report }: { report: ReportData }) {
   )
 }
 
-// Convert API report data to UI ReportData shape
-function apiToReport(session: Record<string, unknown>, reportData: Record<string, unknown> | null): ReportData {
+interface ApiAlertRow {
+  id?: string
+  alertId?: string
+  severity: AlertSeverity
+  category: string
+  message?: string
+  title?: string
+  ts: string
+}
+
+// Compute trust average from a list of alert severities and timeline length.
+// If there are no data points we return null (unknown), not a fake 95.
+function computeTrustAvg(alertRows: ApiAlertRow[], durationMins: number): number | null {
+  if (durationMins === 0 && alertRows.length === 0) return null
+  // Penalty per severity
+  const penalty: Record<string, number> = { critical: 20, high: 10, medium: 5, low: 2 }
+  const totalPenalty = alertRows.reduce((sum, a) => sum + (penalty[a.severity] ?? 0), 0)
+  return Math.max(0, Math.min(100, Math.round(100 - totalPenalty)))
+}
+
+// Convert API report data + alert rows to UI ReportData shape
+function apiToReport(
+  session: Record<string, unknown>,
+  reportData: Record<string, unknown> | null,
+  alertRows: ApiAlertRow[],
+): ReportData {
   const summary = (reportData?.summary as Record<string, unknown>) ?? {}
   const createdAt = (session.createdAt ?? summary.createdAt) as string
   const endedAt = (session.endedAt ?? summary.endedAt) as string | null
@@ -349,7 +374,38 @@ function apiToReport(session: Record<string, unknown>, reportData: Record<string
     : `${durationSecs}s`
 
   const severityBreakdown = (summary.severityBreakdown as Record<string, number>) ?? {}
-  const totalAlerts = (summary.totalAlerts as number) ?? 0
+  const totalAlerts = (summary.totalAlerts as number) ?? alertRows.length
+
+  // Build alert timeline from real alert rows
+  const timeline: AlertItem[] = alertRows.map((a, i) => ({
+    id: a.alertId ?? a.id ?? String(i),
+    sev: a.severity,
+    cat: a.category,
+    msg: a.message ?? a.title ?? 'Alert detected',
+    time: new Date(a.ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+  }))
+
+  // Compute trust avg from real alert data — never hardcode 95
+  const trustAvgComputed = computeTrustAvg(alertRows, durationMins)
+  const trustAvg = trustAvgComputed !== null ? trustAvgComputed : 0
+
+  // Build a simple trust curve: start at 100 and apply penalty at each alert's timestamp
+  let trustCurve: TrustPoint[] = []
+  if (durationMins > 0 && endedAt) {
+    const startMs = new Date(createdAt).getTime()
+    const endMs = new Date(endedAt).getTime()
+    const totalMs = endMs - startMs
+    // Sample at regular intervals
+    const intervals = Math.min(Math.max(durationMins, 2), 20)
+    const penalty: Record<string, number> = { critical: 20, high: 10, medium: 5, low: 2 }
+    for (let i = 0; i <= intervals; i++) {
+      const tMs = startMs + (totalMs * i) / intervals
+      const tLabel = new Date(tMs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+      const alertsUpToNow = alertRows.filter((a) => new Date(a.ts).getTime() <= tMs)
+      const pen = alertsUpToNow.reduce((sum, a) => sum + (penalty[a.severity] ?? 0), 0)
+      trustCurve.push({ t: tLabel, score: Math.max(0, Math.min(100, Math.round(100 - pen))) })
+    }
+  }
 
   return {
     id: (session.id as string) ?? '',
@@ -359,25 +415,27 @@ function apiToReport(session: Record<string, unknown>, reportData: Record<string
     duration: durationStr,
     durationMins,
     participants: 0,
-    trustAvg: 95, // Default — no trust curve in report endpoint
+    trustAvg,
     alerts: {
       total: totalAlerts,
-      critical: severityBreakdown.critical ?? 0,
-      high: severityBreakdown.high ?? 0,
-      medium: severityBreakdown.medium ?? 0,
-      low: severityBreakdown.low ?? 0,
+      critical: severityBreakdown.critical ?? alertRows.filter((a) => a.severity === 'critical').length,
+      high: severityBreakdown.high ?? alertRows.filter((a) => a.severity === 'high').length,
+      medium: severityBreakdown.medium ?? alertRows.filter((a) => a.severity === 'medium').length,
+      low: severityBreakdown.low ?? alertRows.filter((a) => a.severity === 'low').length,
     },
-    timeline: [],
-    trustCurve: [],
+    timeline,
+    trustCurve,
   }
 }
 
 export default function Reports() {
   const isMobile = window.innerWidth <= 768
   const { activeSession } = useSessionContext()
+  const location = useLocation()
+  const incomingSessionId = (location.state as { sessionId?: string } | null)?.sessionId ?? ''
 
   const [reports, setReports] = useState<ReportData[]>([])
-  const [selectedId, setSelectedId] = useState('')
+  const [selectedId, setSelectedId] = useState(incomingSessionId)
   const [loadingReports, setLoadingReports] = useState(true)
 
   // Fetch sessions and their reports from API
@@ -408,12 +466,17 @@ export default function Reports() {
       const reportResults = await Promise.allSettled(
         completed.map(async (session) => {
           try {
-            const res = await authFetch(`/api/sessions/${session.id as string}/report`)
-            if (!res.ok) return apiToReport(session, null)
-            const data = await res.json() as Record<string, unknown>
-            return apiToReport(session, data)
+            // Fetch report summary and alerts in parallel
+            const [reportRes, alertsRes] = await Promise.all([
+              authFetch(`/api/sessions/${session.id as string}/report`),
+              authFetch(`/api/sessions/${session.id as string}/alerts`),
+            ])
+            const reportData = reportRes.ok ? await reportRes.json() as Record<string, unknown> : null
+            const alertsData = alertsRes.ok ? await alertsRes.json() as { alerts?: ApiAlertRow[] } : null
+            const alertRows = alertsData?.alerts ?? []
+            return apiToReport(session, reportData, alertRows)
           } catch {
-            return apiToReport(session, null)
+            return apiToReport(session, null, [])
           }
         })
       )
@@ -424,7 +487,11 @@ export default function Reports() {
 
       if (liveReports.length > 0) {
         setReports(liveReports)
-        setSelectedId(liveReports[0].id)
+        // If navigated from Sessions with a specific session, select it; otherwise first
+        setSelectedId((prev) => {
+          if (prev && liveReports.some((r) => r.id === prev)) return prev
+          return liveReports[0].id
+        })
       }
     } catch {
       // API unavailable — show empty state

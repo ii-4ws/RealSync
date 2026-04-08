@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
 import {
   Briefcase, Users, Star, Clock, AlertTriangle, Trash2, Monitor, FileText,
   ExternalLink, CheckCircle, Loader, X, Play,
@@ -167,7 +168,7 @@ function apiStatusToLocal(apiSession: Record<string, unknown>): Session {
   }
 }
 
-function TableRow({ session, index, onDelete, onMonitor }: { session: Session; index: number; onDelete: (id: string) => void; onMonitor: (s: Session) => void }) {
+function TableRow({ session, index, onDelete, onMonitor, onViewReport }: { session: Session; index: number; onDelete: (id: string) => void; onMonitor: (s: Session) => void; onViewReport: (id: string) => void }) {
   const [hov, setHov] = useState(false)
   const alertColor = session.alerts >= 5 ? $.red : session.alerts >= 2 ? '#F59E0B' : session.alerts === 1 ? $.blue : $.t4
   const TypeIcon = SESSION_TYPE_CONFIG[session.type]?.icon ?? Briefcase
@@ -229,9 +230,14 @@ function TableRow({ session, index, onDelete, onMonitor }: { session: Session; i
       </td>
       <td style={{ padding: '13px 12px', verticalAlign: 'middle' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: hov ? 1 : 0, transition: 'opacity 180ms' }}>
-          {session.status !== 'completed' && <IconBtn icon={Monitor} title="Monitor live" color={$.cyan} onClick={() => onMonitor(session)} />}
-          {session.status === 'completed' && <IconBtn icon={FileText} title="View report" color={$.blue} />}
-          {session.zoomUrl && <IconBtn icon={ExternalLink} title="Open in Zoom" color={$.t2} onClick={() => window.open(session.zoomUrl, '_blank')} />}
+          {session.status === 'completed' ? (
+            <IconBtn icon={FileText} title="View report" color={$.blue} onClick={() => onViewReport(session.id)} />
+          ) : (
+            <>
+              <IconBtn icon={Monitor} title="Monitor live" color={$.cyan} onClick={() => onMonitor(session)} />
+              {session.zoomUrl && <IconBtn icon={ExternalLink} title="Open in Zoom" color={$.t2} onClick={() => window.open(session.zoomUrl, '_blank')} />}
+            </>
+          )}
           <IconBtn icon={Trash2} title="Delete session" color={$.red} onClick={() => onDelete(session.id)} />
         </div>
       </td>
@@ -239,7 +245,7 @@ function TableRow({ session, index, onDelete, onMonitor }: { session: Session; i
   )
 }
 
-function MobileCard({ session, index, onDelete, onMonitor }: { session: Session; index: number; onDelete: (id: string) => void; onMonitor: (s: Session) => void }) {
+function MobileCard({ session, index, onDelete, onMonitor, onViewReport }: { session: Session; index: number; onDelete: (id: string) => void; onMonitor: (s: Session) => void; onViewReport: (id: string) => void }) {
   const alertColor = session.alerts >= 5 ? $.red : session.alerts >= 2 ? '#F59E0B' : session.alerts === 1 ? $.blue : $.t4
   const TypeIcon = SESSION_TYPE_CONFIG[session.type]?.icon ?? Briefcase
 
@@ -283,7 +289,14 @@ function MobileCard({ session, index, onDelete, onMonitor }: { session: Session;
           </span>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          {session.status !== 'completed' && <IconBtn icon={Monitor} title="Monitor" color={$.cyan} onClick={() => onMonitor(session)} />}
+          {session.status === 'completed' ? (
+            <IconBtn icon={FileText} title="View report" color={$.blue} onClick={() => onViewReport(session.id)} />
+          ) : (
+            <>
+              <IconBtn icon={Monitor} title="Monitor" color={$.cyan} onClick={() => onMonitor(session)} />
+              {session.zoomUrl && <IconBtn icon={ExternalLink} title="Open in Zoom" color={$.t2} onClick={() => window.open(session.zoomUrl, '_blank')} />}
+            </>
+          )}
           <IconBtn icon={Trash2} title="Delete" color={$.red} onClick={() => onDelete(session.id)} />
         </div>
       </div>
@@ -508,6 +521,7 @@ function ThCell({ children, width }: { children: React.ReactNode; width?: string
 
 export default function Sessions() {
   const isMobile = window.innerWidth <= 768
+  const navigate = useNavigate()
   const { handleStartSession, handleEndSession, activeSession } = useSessionContext()
 
   const [sessions, setSessions] = useState<Session[]>([])
@@ -585,6 +599,10 @@ export default function Sessions() {
     handleStartSession(session.id, session.title, session.type)
   }, [handleStartSession])
 
+  const handleViewReport = useCallback((id: string) => {
+    navigate('/reports', { state: { sessionId: id } })
+  }, [navigate])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Stats row */}
@@ -655,7 +673,7 @@ export default function Sessions() {
           <div style={{ padding: '10px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <AnimatePresence>
               {filtered.map((s, i) => (
-                <MobileCard key={s.id} session={s} index={i} onDelete={handleDelete} onMonitor={handleMonitor} />
+                <MobileCard key={s.id} session={s} index={i} onDelete={handleDelete} onMonitor={handleMonitor} onViewReport={handleViewReport} />
               ))}
             </AnimatePresence>
           </div>
@@ -676,7 +694,7 @@ export default function Sessions() {
               <tbody>
                 <AnimatePresence>
                   {filtered.map((s, i) => (
-                    <TableRow key={s.id} session={s} index={i} onDelete={handleDelete} onMonitor={handleMonitor} />
+                    <TableRow key={s.id} session={s} index={i} onDelete={handleDelete} onMonitor={handleMonitor} onViewReport={handleViewReport} />
                   ))}
                 </AnimatePresence>
               </tbody>
