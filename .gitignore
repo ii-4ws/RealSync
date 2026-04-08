@@ -58,3 +58,4 @@ tasks/
 RealSync-AI-Prototype/src/models.zip
 RealSync-AI-Prototype/.venv 2
 .gitnexus
+.DS_Store
