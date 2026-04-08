@@ -15,6 +15,7 @@ import type { AlertSeverity } from '../lib/mockData'
 import { authFetch } from '../lib/api'
 import { useSessionContext } from '../contexts/SessionContext'
 import { generateReport } from '../lib/generateReport'
+import { generateReportReactPdf } from '../lib/generateReportReactPdf'
 
 interface TrustPoint { t: string; score: number }
 
@@ -75,6 +76,26 @@ async function downloadPdf(report: ReportData) {
     alerts: report.alerts,
     timeline: report.timeline,
     trustCurve: report.trustCurve,
+  })
+}
+
+async function downloadPdfV2(report: ReportData) {
+  await generateReportReactPdf({
+    sessionId: report.id,
+    title: report.title,
+    date: report.date,
+    duration: report.duration,
+    meetingType: report.meetingType ?? 'standard',
+    trustScore: report.trustAvg,
+    riskLevel: report.trustAvg >= 90 ? 'low' : report.trustAvg >= 75 ? 'moderate' : report.trustAvg >= 60 ? 'high' : 'critical',
+    alerts: report.alerts,
+    timeline: report.timeline.map((t) => ({
+      time: t.time,
+      severity: t.sev,
+      category: t.cat,
+      message: t.msg,
+    })),
+    participants: report.participants,
   })
 }
 
@@ -206,7 +227,8 @@ function ReportDetail({ report }: { report: ReportData }) {
 
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexShrink: 0 }}>
             <div style={{ display: 'flex', gap: isMobile ? 4 : 6, marginTop: 4, flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
-              <ExportBtn icon={File} label="PDF" onClick={() => downloadPdf(report)} />
+              <ExportBtn icon={File} label="PDF (v1)" onClick={() => downloadPdf(report)} />
+              <ExportBtn icon={File} label="PDF (v2)" onClick={() => downloadPdfV2(report)} />
               <ExportBtn icon={Database} label="CSV" onClick={() => downloadCsv(report)} />
               <ExportBtn icon={Download} label="JSON" onClick={() => downloadJson(report)} />
             </div>
