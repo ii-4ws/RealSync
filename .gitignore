@@ -38,13 +38,9 @@ realsync-backend/bot/screenshots/
 
 # Editor/IDE
 .vscode/
-.claude/
-CLAUDE.md
 
 # Development artifacts
-AGENTS.md
 HANDOFF*.md
-handoff-aws/
 
 # Task tracking
 tasks/
