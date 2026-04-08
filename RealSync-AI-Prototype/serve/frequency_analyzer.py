@@ -124,7 +124,7 @@ def analyze_frequency(face_crop_bgr: np.ndarray) -> dict:
         # log_hf ~ -7.5  → suspicious
         # log_hf ~ -9.0  → likely fake (heavy smoothing)
         # log_hf < -10.0 → almost certainly fake
-        score = _sigmoid_map(log_hf, center=-7.0, steepness=0.5)
+        score = _sigmoid_map(log_hf, center=-8.0, steepness=0.5)
 
         # Secondary: Laplacian variance boost/penalty
         # Real: lap_var ~ 50-200+, Fake: lap_var ~ 5-50

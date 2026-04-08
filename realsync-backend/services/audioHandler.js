@@ -45,11 +45,26 @@ function processAudioChunk(session, dataB64) {
     session.audioAnalysisBuffer.length >= 8 &&
     now - session.lastAudioAnalysisAt >= AUDIO_ANALYSIS_INTERVAL_MS
   ) {
-    session.audioAnalysisInFlight = true;
-    // 7.12: Only splice 8 chunks at a time to prevent silent data loss
-    // when audio accumulates faster than analysis can process it.
+    // 7.12: Only splice 8 chunks at a time
     const chunks = session.audioAnalysisBuffer.splice(0, 8);
     const combinedAudioB64 = combineAudioChunks(chunks);
+
+    // RMS signal detection: skip silence from virtual PulseAudio sink
+    const pcmBuf = Buffer.from(combinedAudioB64, "base64");
+    let rmsEnergy = 0;
+    for (let i = 0; i < pcmBuf.length - 1; i += 2) {
+      const sample = pcmBuf.readInt16LE(i);
+      rmsEnergy += sample * sample;
+    }
+    rmsEnergy = Math.sqrt(rmsEnergy / (pcmBuf.length / 2));
+
+    if (rmsEnergy < 100) {
+      // Silence detected — skip AI analysis to avoid false "spoofed" flags
+      session.audioHasSignal = false;
+      return;
+    }
+    session.audioHasSignal = true;
+    session.audioAnalysisInFlight = true;
     session.lastAudioAnalysisAt = now;
 
     analyzeAudio({ sessionId: session.id, audioB64: combinedAudioB64, durationMs: 4000 })

@@ -266,13 +266,14 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = 
         boundary_score = boundary_result["boundaryScore"]
 
         if clip_score is not None:
-            # Adaptive: if frequency has no signal (Zoom compression kills it),
-            # redistribute its weight to CLIP (70%) and boundary (30%)
-            if freq_score < 0.01:
-                eff_clip_w = ENSEMBLE_WEIGHT_CLIP + ENSEMBLE_WEIGHT_FREQUENCY * 0.70
-                eff_bnd_w = ENSEMBLE_WEIGHT_BOUNDARY + ENSEMBLE_WEIGHT_FREQUENCY * 0.30
+            # Adaptive: when frequency signal is weak (Zoom H.264 strips texture),
+            # boost CLIP weight from 50%→65% and reduce frequency from 30%→15%
+            if freq_score < 0.55:
+                eff_clip_w = 0.65
+                eff_freq_w = 0.15
+                eff_bnd_w = ENSEMBLE_WEIGHT_BOUNDARY  # 0.20 stays
                 ensemble_score = round(
-                    eff_clip_w * clip_score + eff_bnd_w * boundary_score,
+                    eff_clip_w * clip_score + eff_freq_w * freq_score + eff_bnd_w * boundary_score,
                     4,
                 )
             else:

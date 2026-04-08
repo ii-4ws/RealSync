@@ -150,11 +150,11 @@ async function handleFrame(session, message) {
       const behaviorConf = result.aggregated.confidenceLayers?.behavior || 0.55;
 
       let finalTrust;
-      if (AUDIO_DEEPFAKE_ENABLED && audioScore != null) {
+      if (AUDIO_DEEPFAKE_ENABLED && audioScore != null && session.audioHasSignal !== false) {
         // 3-signal weighted: video=0.45, audio=0.35, behavior=0.20
         finalTrust = 0.45 * rawVideoScore + 0.35 * audioScore + 0.20 * behaviorConf;
       } else {
-        // 2-signal (no audio): video=0.55, behavior=0.45
+        // 2-signal fallback (no audio or silence detected): video=0.55, behavior=0.45
         finalTrust = 0.55 * rawVideoScore + 0.45 * behaviorConf;
       }
       session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));

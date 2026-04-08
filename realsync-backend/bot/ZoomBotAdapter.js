@@ -118,7 +118,7 @@ class ZoomBotAdapter {
 
     try {
       this.browser = await puppeteer.launch({
-        headless: this.headless ? "new" : false,
+        headless: process.env.DISPLAY ? false : (this.headless ? "new" : false),
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -1686,7 +1686,7 @@ class ZoomBotAdapter {
     // PulseAudio fallback: capture system audio via parec
     try {
       const { spawn } = require("child_process");
-      const monitorSource = "alsa_output.pci-0000_04_00.6.analog-stereo.monitor";
+      const monitorSource = process.env.PULSE_MONITOR_SOURCE || "virtual_speaker.monitor";
       this._parecProc = spawn("parec", [
         "--device=" + monitorSource,
         "--rate=16000", "--channels=1", "--format=s16le", "--raw"
