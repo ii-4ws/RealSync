@@ -10,8 +10,10 @@ import {
 import $ from '../lib/tokens'
 import { EASE, LABEL_STYLE, MONO_STYLE, trustColor, SEVERITY_CONFIG } from '../lib/tokens'
 import type { AlertSeverity } from '../lib/mockData'
+import { REPORTS } from '../lib/mockData'
 import { authFetch } from '../lib/api'
 import { useSessionContext } from '../contexts/SessionContext'
+import { generateReport } from '../lib/generateReport'
 
 interface TrustPoint { t: string; score: number }
 
@@ -29,6 +31,7 @@ interface ReportData {
   date: string
   duration: string
   durationMins: number
+  meetingType?: string
   participants: number
   trustAvg: number
   alerts: { total: number; critical: number; high: number; medium: number; low: number }
@@ -58,12 +61,20 @@ function downloadCsv(report: ReportData) {
   URL.revokeObjectURL(url)
 }
 
-function downloadPdf(report: ReportData) {
-  const txt = `RealSync Session Report\n${report.title}\nDate: ${report.date}\nTrust Avg: ${report.trustAvg}%\nAlerts: ${report.alerts.total}\n\nTimeline:\n${report.timeline.map((t) => `[${t.time}] ${t.sev.toUpperCase()} — ${t.cat}: ${t.msg}`).join('\n')}`
-  const blob = new Blob([txt], { type: 'text/plain' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = `${report.id}.txt`; a.click()
-  URL.revokeObjectURL(url)
+async function downloadPdf(report: ReportData) {
+  await generateReport({
+    id: report.id,
+    title: report.title,
+    date: report.date,
+    duration: report.duration,
+    durationMins: report.durationMins,
+    meetingType: report.meetingType,
+    participants: report.participants,
+    trustAvg: report.trustAvg,
+    alerts: report.alerts,
+    timeline: report.timeline,
+    trustCurve: report.trustCurve,
+  })
 }
 
 const SEVERITY_ICONS: Record<AlertSeverity, typeof AlertCircle> = {
@@ -73,22 +84,37 @@ const SEVERITY_ICONS: Record<AlertSeverity, typeof AlertCircle> = {
   low: Info,
 }
 
-function ExportBtn({ icon: Icon, label, onClick }: { icon: typeof Download; label: string; onClick: () => void }) {
+function ExportBtn({ icon: Icon, label, onClick }: { icon: typeof Download; label: string; onClick: () => void | Promise<void> }) {
   const [hov, setHov] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const handleClick = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await onClick()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <button
-      onClick={onClick}
+      onClick={handleClick}
+      disabled={busy}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
       style={{
         display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px',
         borderRadius: 8, border: `1px solid ${hov ? $.b2 : $.b1}`,
         background: hov ? 'rgba(255,255,255,0.04)' : 'transparent',
-        color: hov ? $.t1 : $.t3, cursor: 'pointer', fontSize: 11,
+        color: hov ? $.t1 : $.t3, cursor: busy ? 'default' : 'pointer', fontSize: 11,
         fontFamily: 'Inter, sans-serif', transition: 'all 150ms',
+        opacity: busy ? 0.6 : 1,
       }}
     >
-      <Icon size={12} /> {label}
+      {busy ? <Loader size={12} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Icon size={12} />}
+      {busy ? 'Generating...' : label}
     </button>
   )
 }
@@ -362,7 +388,9 @@ export default function Reports() {
       const sessionsData = await sessionsRes.json() as { sessions?: Record<string, unknown>[] }
 
       if (!sessionsData.sessions || sessionsData.sessions.length === 0) {
-        // Fall back to mock data
+        // No sessions yet — use mock data for demo
+        setReports(REPORTS as unknown as ReportData[])
+        setSelectedId(REPORTS[0].id)
         setLoadingReports(false)
         return
       }
@@ -370,6 +398,9 @@ export default function Reports() {
       // Only fetch reports for completed sessions
       const completed = sessionsData.sessions.filter((s) => s.endedAt)
       if (completed.length === 0) {
+        // No completed sessions — fall back to mock data
+        setReports(REPORTS as unknown as ReportData[])
+        setSelectedId(REPORTS[0].id)
         setLoadingReports(false)
         return
       }
@@ -396,7 +427,9 @@ export default function Reports() {
         setSelectedId(liveReports[0].id)
       }
     } catch {
-      // Fall back to mock data silently
+      // API unavailable — fall back to mock data
+      setReports(REPORTS as unknown as ReportData[])
+      setSelectedId(REPORTS[0].id)
     } finally {
       setLoadingReports(false)
     }
