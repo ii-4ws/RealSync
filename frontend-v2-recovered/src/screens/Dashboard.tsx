@@ -61,14 +61,15 @@ const DEFAULT_METRICS: LiveMetrics = {
 }
 
 function riskLabel(level: RiskLevel | undefined): string {
-  if (!level) return 'LOW'
+  if (!level) return '—'
   return level.toUpperCase()
 }
 
 function riskColor(level: RiskLevel | undefined): string {
   if (level === 'high') return '#EF4444'
   if (level === 'medium') return '#F59E0B'
-  return $.green
+  if (level === 'low') return $.green
+  return $.t4
 }
 
 function pct(val: number | null | undefined): number {
@@ -127,10 +128,11 @@ function DetectionPanel({ icon: Icon, label, score, risk, riskColor: rc, color, 
       </div>
 
       <div style={{
-        fontSize: 28, fontFamily: 'JetBrains Mono, monospace',
+        fontSize: 24, fontFamily: 'JetBrains Mono, monospace',
         fontWeight: 300, color: $.t1,
         fontFeatureSettings: "'tnum' 1",
         display: 'block', marginBottom: 10,
+        lineHeight: 1.2,
       }}>
         {score}%
       </div>
