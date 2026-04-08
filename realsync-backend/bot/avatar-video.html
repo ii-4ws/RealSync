@@ -38,7 +38,7 @@ window.loadBaymax = function(b64) {
     baseCtx.imageSmoothingQuality = "high";
     baseCtx.drawImage(img, sx, sy, sw, sh, 0, 0, W, H);
 
-    // Remove Gemini watermark
+    // Clean bottom-right corner overlay
     var pX = W - 60, pY = H - 50;
     var s1 = baseCtx.getImageData(W - 70, H - 55, 1, 1).data;
     var s2 = baseCtx.getImageData(W - 5, H - 5, 1, 1).data;

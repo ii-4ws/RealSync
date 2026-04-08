@@ -1,7 +1,7 @@
 /**
  * Generate a Y4M video file of the RealSync bot avatar.
  *
- * Uses the Gemini-generated Baymax image as the base, overlays the
+ * Uses the Baymax image as the base, overlays the
  * RealSync eye logo on the chest, and applies subtle breathing/sway
  * animations per-frame via Puppeteer canvas rendering.
  *

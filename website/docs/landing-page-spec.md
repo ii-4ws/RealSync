@@ -171,6 +171,6 @@ Do NOT modify existing homepage routes or break existing app functionality.
 
 Must be smooth on mobile.
 
-Must follow performance guidance from skills.md files.
+Must follow performance best practices.
 
 Use scroll-driven transform/opacity animation only.
