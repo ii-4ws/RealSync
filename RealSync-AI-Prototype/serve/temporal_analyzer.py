@@ -7,7 +7,7 @@ Maintains a per-session sliding window of frame results and computes:
 - Score volatility (standard deviation)
 - Anomaly detection (sudden trust drops, identity switches, emotion instability)
 
-Reduces MesoNet-4 false positives by stabilizing frame-to-frame noise.
+Reduces false positives by stabilizing frame-to-frame noise.
 """
 import threading
 import time

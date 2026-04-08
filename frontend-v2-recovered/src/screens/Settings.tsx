@@ -270,7 +270,11 @@ function DetectionTab() {
   const [audio, setAudio] = useState(true)
   const [emotion, setEmotion] = useState(true)
   const [identity, setIdentity] = useState(true)
-  const [sensitivity, setSensitivity] = useState<'low' | 'medium' | 'high'>('high')
+  const [sensitivity, setSensitivity] = useState<'low' | 'medium' | 'high'>(() => {
+    const saved = localStorage.getItem('rs_detection_sensitivity')
+    return (saved as 'low' | 'medium' | 'high') ?? 'high'
+  })
+  useEffect(() => { localStorage.setItem('rs_detection_sensitivity', sensitivity) }, [sensitivity])
   const [savingDetection, setSavingDetection] = useState(false)
   const [savedDetection, setSavedDetection] = useState(false)
 
@@ -317,10 +321,10 @@ function DetectionTab() {
   }
 
   const MODELS = [
-    { key: 'Visual', val: 'XceptionNet + EfficientNet-B4' },
-    { key: 'Audio', val: 'RawNet2 + LFCC-LCNN' },
-    { key: 'Emotion', val: 'DeBERTa-v3 + MediaPipe' },
-    { key: 'Identity', val: 'ArcFace ResNet-50' },
+    { key: 'Visual', val: 'CLIP ViT-L/14 + Frequency + Boundary' },
+    { key: 'Audio', val: 'WavLM-base (Fine-tuned)' },
+    { key: 'Emotion', val: 'EfficientNet-B2 + MediaPipe' },
+    { key: 'Text', val: 'DeBERTa-v3 Zero-Shot NLI' },
   ]
 
   return (
@@ -331,7 +335,7 @@ function DetectionTab() {
           <ToggleRow label="Visual Deepfake Detection" description="Analyzes video stream for facial manipulation and neural synthesis artifacts" on={visual} onChange={setVisual} delay={0.1} />
           <ToggleRow label="Audio Manipulation Detection" description="Identifies voice cloning, audio splicing, and codec-level deepfake signals" on={audio} onChange={setAudio} delay={0.15} />
           <ToggleRow label="Emotion Analysis" description="Tracks micro-expression inconsistencies and behavioral pattern anomalies" on={emotion} onChange={setEmotion} delay={0.2} />
-          <ToggleRow label="Identity Verification" description="Continuous biometric cross-referencing against registered participant profiles (UI only)" on={identity} onChange={setIdentity} delay={0.25} />
+          <ToggleRow label="Identity Verification" description="Continuous biometric cross-referencing against registered participant profiles" on={identity} onChange={setIdentity} delay={0.25} />
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
           <motion.button
@@ -422,10 +426,29 @@ function DetectionTab() {
 // ─── Tab: Notifications ───────────────────────────────────────────────────────
 
 function NotificationsTab() {
-  const [desktop, setDesktop] = useState(true)
-  const [sound, setSound] = useState(true)
-  const [email, setEmail] = useState(false)
-  const [levels, setLevels] = useState({ critical: true, high: true, medium: false, low: false })
+  const [desktop, setDesktop] = useState(() => {
+    const saved = localStorage.getItem('rs_notif_desktop')
+    return saved !== null ? saved === 'true' : true
+  })
+  const [sound, setSound] = useState(() => {
+    const saved = localStorage.getItem('rs_notif_sound')
+    return saved !== null ? saved === 'true' : true
+  })
+  const [email, setEmail] = useState(() => {
+    const saved = localStorage.getItem('rs_notif_email')
+    return saved !== null ? saved === 'true' : false
+  })
+  const [levels, setLevels] = useState<Record<string, boolean>>(() => {
+    const saved = localStorage.getItem('rs_notif_levels')
+    return saved ? JSON.parse(saved) : { critical: true, high: true, medium: false, low: false }
+  })
+
+  useEffect(() => {
+    localStorage.setItem('rs_notif_desktop', String(desktop))
+    localStorage.setItem('rs_notif_sound', String(sound))
+    localStorage.setItem('rs_notif_email', String(email))
+    localStorage.setItem('rs_notif_levels', JSON.stringify(levels))
+  }, [desktop, sound, email, levels])
 
   const LEVEL_OPTS = [
     { key: 'critical', label: 'Critical', color: $.red, bg: 'rgba(239,68,68,0.08)' },
@@ -535,26 +558,13 @@ function SecurityTab() {
           <div>
             <h3 style={{ fontSize: 13, fontWeight: 600, color: $.t1, margin: '0 0 4px' }}>Two-Factor Authentication</h3>
             <p style={{ fontSize: 11, color: $.t3, margin: 0, lineHeight: 1.6, maxWidth: 340 }}>
-              When enabled, you'll need an authenticator app code on each login in addition to your password.
+              Add an extra layer of security to your account with an authenticator app.
             </p>
           </div>
-          <Toggle on={twoFa} onChange={setTwoFa} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <span style={{ fontSize: 10, color: $.amber, fontWeight: 600, padding: '3px 8px', borderRadius: 6, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.18)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Coming Soon</span>
+          </div>
         </div>
-        <AnimatePresence>
-          {twoFa && (
-            <motion.div
-              initial={{ opacity: 0, height: 0, marginTop: 0 }}
-              animate={{ opacity: 1, height: 'auto', marginTop: 14 }}
-              exit={{ opacity: 0, height: 0, marginTop: 0 }}
-              transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-              style={{ overflow: 'hidden' }}
-            >
-              <div style={{ padding: '11px 14px', background: 'rgba(34,211,238,0.06)', border: '1px solid rgba(34,211,238,0.18)', borderRadius: 10, fontSize: 12, color: $.cyan, lineHeight: 1.6 }}>
-                2FA is now enabled. A QR code has been sent to your email — scan it with your authenticator app to complete setup.
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </SettingsCard>
 
       <SettingsCard delay={0.12}>
@@ -623,8 +633,8 @@ function SecurityTab() {
               <Monitor size={16} color={$.cyan} />
             </div>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12, color: $.t1, fontWeight: 500 }}>MacBook Pro — Safari</div>
-              <div style={{ fontSize: 10, color: $.t3, marginTop: 2, fontFamily: 'JetBrains Mono, monospace', letterSpacing: '0.01em' }}>Sydney, AU · 192.168.1.x · Active now</div>
+              <div style={{ fontSize: 12, color: $.t1, fontWeight: 500 }}>This Device</div>
+              <div style={{ fontSize: 10, color: $.t3, marginTop: 2, fontFamily: 'JetBrains Mono, monospace', letterSpacing: '0.01em' }}>Active now</div>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 20, background: 'rgba(16,185,129,0.07)', border: '1px solid rgba(16,185,129,0.18)', flexShrink: 0 }}>
@@ -632,7 +642,6 @@ function SecurityTab() {
             <span style={{ fontSize: 10, color: $.green, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Current</span>
           </div>
         </motion.div>
-        <p style={{ fontSize: 11, color: $.t4, margin: '10px 0 0' }}>1 active session · No suspicious activity detected</p>
       </SettingsCard>
     </div>
   )

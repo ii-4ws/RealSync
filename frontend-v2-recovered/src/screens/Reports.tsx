@@ -5,13 +5,12 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts'
 import {
-  FileText, Calendar, Clock, Users, AlertTriangle, AlertCircle,
+  FileText, Calendar, Clock, AlertTriangle, AlertCircle,
   Info, Download, File, Database, Loader,
 } from 'lucide-react'
 import $ from '../lib/tokens'
 import { EASE, LABEL_STYLE, MONO_STYLE, trustColor, SEVERITY_CONFIG } from '../lib/tokens'
 import type { AlertSeverity } from '../lib/mockData'
-// Mock data removed — reports always fetch from API
 import { authFetch } from '../lib/api'
 import { useSessionContext } from '../contexts/SessionContext'
 import { generateReport } from '../lib/generateReport'
@@ -219,8 +218,8 @@ function ReportDetail({ report }: { report: ReportData }) {
                 <span style={{ fontSize: 11, ...MONO_STYLE, color: $.t3 }}>{report.duration}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <Users size={11} color={$.t4} />
-                <span style={{ fontSize: 11, color: $.t3 }}>{report.participants} part.</span>
+                <AlertTriangle size={11} color={$.t4} />
+                <span style={{ fontSize: 11, color: $.t3 }}>{report.alerts.total} alert{report.alerts.total !== 1 ? 's' : ''}</span>
               </div>
             </div>
           </div>
@@ -249,7 +248,7 @@ function ReportDetail({ report }: { report: ReportData }) {
           { label: 'Total Alerts', val: String(report.alerts.total), icon: AlertTriangle, color: report.alerts.total > 0 ? $.red : $.green },
           { label: 'Critical', val: String(report.alerts.critical), icon: AlertCircle, color: report.alerts.critical > 0 ? '#EF4444' : $.t4 },
           { label: 'High', val: String(report.alerts.high), icon: AlertTriangle, color: report.alerts.high > 0 ? '#F97316' : $.t4 },
-          { label: 'Participants', val: String(report.participants), icon: Users, color: $.blue },
+          { label: 'Duration', val: report.duration, icon: Clock, color: $.blue },
         ].map((s, i) => (
           <motion.div
             key={s.label}
@@ -467,7 +466,6 @@ export default function Reports() {
       const sessionsData = await sessionsRes.json() as { sessions?: Record<string, unknown>[] }
 
       if (!sessionsData.sessions || sessionsData.sessions.length === 0) {
-        // No sessions yet — use mock data for demo
         setReports([])
         setSelectedId('')
         setLoadingReports(false)
@@ -477,7 +475,6 @@ export default function Reports() {
       // Only fetch reports for completed sessions
       const completed = sessionsData.sessions.filter((s) => s.endedAt)
       if (completed.length === 0) {
-        // No completed sessions — fall back to mock data
         setReports([])
         setSelectedId('')
         setLoadingReports(false)
