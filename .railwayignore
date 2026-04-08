@@ -1,0 +1,12 @@
+RealSync-AI-Prototype/
+Front-End/
+docs/
+.gitnexus/
+.claude/
+.research/
+demo-video/
+contracts/
+submission-prep/
+*.md
+handoff-aws/
+test-ahmed/
