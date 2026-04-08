@@ -23,13 +23,14 @@ export default function Header({ onCmdK, onHamburger }: HeaderProps) {
 
   const PROTOTYPE_MODE = import.meta.env.VITE_PROTOTYPE_MODE === '1'
 
-  const displayName = PROTOTYPE_MODE
-    ? 'Demo User'
-    : (profile?.full_name ?? profile?.username ?? supabaseSession?.user?.email?.split('@')[0] ?? 'User')
+  const hasRealSession = !!supabaseSession?.user?.email
+  const displayName = hasRealSession
+    ? (profile?.full_name ?? profile?.username ?? supabaseSession?.user?.email?.split('@')[0] ?? 'User')
+    : PROTOTYPE_MODE ? 'Demo User' : 'User'
 
-  const displayEmail = PROTOTYPE_MODE
-    ? 'demo@realsync.ai'
-    : (supabaseSession?.user?.email ?? '')
+  const displayEmail = hasRealSession
+    ? (supabaseSession?.user?.email ?? '')
+    : PROTOTYPE_MODE ? 'demo@realsync.ai' : ''
 
   const avatarInitials = displayName
     .split(' ')

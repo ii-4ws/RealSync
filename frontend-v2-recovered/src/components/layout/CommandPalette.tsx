@@ -22,10 +22,20 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   useEffect(() => {
     if (!open) return
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { onClose(); return }
+      // Single-key shortcuts when palette is open
+      const key = e.key.toUpperCase()
+      const match = COMMANDS.find((c) => c.hint === key)
+      if (match) {
+        e.preventDefault()
+        match.action(navigate)
+        onClose()
+      }
+    }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [open, onClose])
+  }, [open, onClose, navigate])
 
   return (
     <AnimatePresence>

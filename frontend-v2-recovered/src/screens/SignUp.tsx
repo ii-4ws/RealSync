@@ -10,6 +10,39 @@ import { EASE } from '../lib/tokens'
 import { supabase } from '../lib/supabaseClient'
 import { isBlockedDomain } from '../lib/blockedDomains'
 
+// Animated gradient mesh background
+const GradientMesh = () => (
+  <div style={{
+    position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none',
+  }}>
+    {/* Base gradient */}
+    <div style={{
+      position: 'absolute', inset: '-50%', width: '200%', height: '200%',
+      background: `
+        radial-gradient(at 27% 37%, rgba(34,211,238,0.12) 0px, transparent 50%),
+        radial-gradient(at 97% 21%, rgba(139,92,246,0.10) 0px, transparent 50%),
+        radial-gradient(at 52% 99%, rgba(59,130,246,0.08) 0px, transparent 50%),
+        radial-gradient(at 10% 29%, rgba(34,211,238,0.06) 0px, transparent 50%),
+        radial-gradient(at 97% 96%, rgba(139,92,246,0.08) 0px, transparent 50%),
+        radial-gradient(at 33% 50%, rgba(59,130,246,0.06) 0px, transparent 50%),
+        radial-gradient(at 79% 53%, rgba(34,211,238,0.04) 0px, transparent 50%)
+      `,
+      animation: 'meshMove 20s ease-in-out infinite alternate',
+    }} />
+    {/* Grid overlay */}
+    <div style={{
+      position: 'absolute', inset: 0,
+      backgroundImage: `linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)`,
+      backgroundSize: '64px 64px',
+    }} />
+    {/* Noise texture */}
+    <div style={{
+      position: 'absolute', inset: 0, opacity: 0.03,
+      backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`,
+    }} />
+  </div>
+)
+
 function getPasswordStrength(pw: string): { score: number; label: string; color: string } {
   if (!pw) return { score: 0, label: '', color: $.t4 }
   let score = 0
@@ -572,10 +605,8 @@ export default function SignUp() {
         display: 'flex', flexDirection: 'column',
         position: 'relative', overflow: 'hidden',
       }}>
-        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-          <div style={{ position: 'absolute', width: 500, height: 500, borderRadius: '50%', background: `radial-gradient(circle, ${$.violet}10 0%, transparent 65%)`, top: -250, right: -150, filter: 'blur(80px)' }} />
-          <div style={{ position: 'absolute', width: 400, height: 400, borderRadius: '50%', background: `radial-gradient(circle, ${$.cyan}0d 0%, transparent 65%)`, bottom: -150, left: -100, filter: 'blur(80px)' }} />
-        </div>
+        {/* Animated gradient mesh background */}
+        <GradientMesh />
 
         <div style={{ padding: '36px 20px 16px', position: 'relative', zIndex: 1 }}>
           <motion.div
@@ -611,20 +642,12 @@ export default function SignUp() {
 
   return (
     <div style={{ minHeight: '100vh', background: $.bg0, display: 'flex', position: 'relative', overflow: 'hidden' }}>
-      {/* Background */}
-      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-        <div style={{ position: 'absolute', width: 700, height: 700, borderRadius: '50%', background: `radial-gradient(circle, ${$.violet}0e 0%, transparent 60%)`, top: -300, left: -150, filter: 'blur(100px)' }} />
-        <div style={{ position: 'absolute', width: 600, height: 600, borderRadius: '50%', background: `radial-gradient(circle, ${$.cyan}0d 0%, transparent 60%)`, bottom: -250, right: -100, filter: 'blur(100px)' }} />
-        <div style={{ position: 'absolute', width: 400, height: 400, borderRadius: '50%', background: `radial-gradient(circle, ${$.blue}08 0%, transparent 55%)`, top: '50%', left: '35%', filter: 'blur(80px)' }} />
-        <div style={{
-          position: 'absolute', inset: 0,
-          backgroundImage: `linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px)`,
-          backgroundSize: '64px 64px',
-        }} />
-      </div>
+      {/* Animated gradient mesh background */}
+      <GradientMesh />
 
       {/* Left panel — brand */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '56px 72px', position: 'relative', zIndex: 1, maxWidth: 640 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '56px 48px', position: 'relative', zIndex: 1 }}>
+      <div style={{ maxWidth: 480, width: '100%' }}>
         {/* Logo */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -632,7 +655,7 @@ export default function SignUp() {
           transition={{ duration: 0.5, ease: EASE }}
           style={{ marginBottom: 52 }}
         >
-          <img src="/realsync-logo.png" alt="RealSync" style={{ height: 40, width: 'auto' }} />
+          <img src="/realsync-logo.png" alt="RealSync" style={{ height: 64, width: 'auto' }} />
         </motion.div>
 
         {/* Headline */}
@@ -731,6 +754,7 @@ export default function SignUp() {
             Join organizations using RealSync to secure their meetings
           </span>
         </motion.div>
+      </div>
       </div>
 
       {/* Right panel — form */}
