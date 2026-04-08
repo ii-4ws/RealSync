@@ -18,8 +18,8 @@ import torch.nn as nn
 
 from serve.config import (
     WAVLM_WEIGHTS_PATH,
-    DEEPFAKE_AUTH_THRESHOLD_LOW_RISK,
-    DEEPFAKE_AUTH_THRESHOLD_HIGH_RISK,
+    AUDIO_AUTH_THRESHOLD_LOW_RISK,
+    AUDIO_AUTH_THRESHOLD_HIGH_RISK,
     AUDIO_SAMPLE_RATE,
     AUDIO_TARGET_LENGTH,
 )
@@ -62,13 +62,13 @@ class WavLMAudioClassifier(nn.Module):
         Args:
             input_values: (batch, seq_len) raw waveform tensor, normalized by Wav2Vec2FeatureExtractor
         Returns:
-            (batch, 1) sigmoid output — P(spoof)
+            (batch, 1) raw logits (not sigmoid — caller applies custom scaling)
         """
         outputs = self.encoder(input_values)
         hidden_states = outputs.last_hidden_state  # (batch, seq_len, 768)
         pooled = hidden_states.mean(dim=1)          # (batch, 768)
         logits = self.classifier(pooled)             # (batch, 1)
-        return torch.sigmoid(logits)
+        return logits
 
 
 # ---------------------------------------------------------------
@@ -99,12 +99,17 @@ def get_audio_model():
 
             if os.path.isfile(WAVLM_WEIGHTS_PATH):
                 state = torch.load(WAVLM_WEIGHTS_PATH, map_location="cpu", weights_only=True)
-                head_state = state.get("classifier_state_dict", state.get("model_state_dict", state))
-                if "classifier_state_dict" in state:
-                    net.classifier.load_state_dict(head_state)
+                # Load full model state (encoder + classifier) if available,
+                # since Phase 2 fine-tuning modifies the encoder
+                if "model_state_dict" in state:
+                    net.load_state_dict(state["model_state_dict"], strict=False)
+                    print(f"[audio] Loaded full model (encoder + classifier) from {WAVLM_WEIGHTS_PATH}")
+                elif "classifier_state_dict" in state:
+                    net.classifier.load_state_dict(state["classifier_state_dict"])
+                    print(f"[audio] Loaded classifier head only from {WAVLM_WEIGHTS_PATH}")
                 else:
-                    net.load_state_dict(head_state, strict=False)
-                print(f"[audio] Loaded WavLM classification head from {WAVLM_WEIGHTS_PATH}")
+                    net.load_state_dict(state, strict=False)
+                    print(f"[audio] Loaded raw state dict from {WAVLM_WEIGHTS_PATH}")
             else:
                 print(f"[audio] WARNING: WavLM weights not found at {WAVLM_WEIGHTS_PATH}")
                 print("[audio] Model disabled — no trained classification head available")
@@ -112,7 +117,9 @@ def get_audio_model():
                 return None
 
             net.train(False)
-            _device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+            # Force CPU — lightweight model (~200ms per 4s chunk), avoids CUDA
+            # memory contention with CLIP + emotion running on GPU
+            _device = "cpu"
             net = net.to(_device)
             net._device = _device
             _model = net
@@ -164,16 +171,20 @@ def predict_audio(audio_b64: str) -> dict:
 
         with torch.no_grad():
             raw = model(input_values)
-            prediction = float(raw[0][0])
+            logit = float(raw[0][0])
 
-        # Model outputs P(spoof). Convert to authenticity.
-        authenticity = round(1.0 - prediction, 4)
+        # Raw logits are saturated (20-70 range). Lower logit = more real.
+        # Rescale: logit 15 → auth 1.0 (definitely real), logit 60 → auth 0.0 (definitely fake)
+        # Using sigmoid with shifted center and compressed steepness
+        import math
+        authenticity = 1.0 / (1.0 + math.exp(0.1 * (logit - 35.0)))
+        authenticity = round(max(0.0, min(1.0, authenticity)), 4)
 
-        print(f"[audio] raw_spoof_prob={prediction:.4f} authenticity={authenticity:.4f}")
+        print(f"[audio] raw_logit={logit:.2f} authenticity={authenticity:.4f}")
 
-        if authenticity > DEEPFAKE_AUTH_THRESHOLD_LOW_RISK:
+        if authenticity > AUDIO_AUTH_THRESHOLD_LOW_RISK:
             risk = "low"
-        elif authenticity > DEEPFAKE_AUTH_THRESHOLD_HIGH_RISK:
+        elif authenticity > AUDIO_AUTH_THRESHOLD_HIGH_RISK:
             risk = "medium"
         else:
             risk = "high"

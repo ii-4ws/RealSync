@@ -20,6 +20,8 @@ EMOTION_LABELS = ["Happy", "Neutral", "Angry", "Fear", "Surprise", "Sad"]
 WAVLM_WEIGHTS_PATH = os.path.join(MODELS_DIR, "wavlm_audio_weights.pth")
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_TARGET_LENGTH = 64000
+AUDIO_AUTH_THRESHOLD_LOW_RISK = 0.55   # WebRTC audio scores lower than clean mic
+AUDIO_AUTH_THRESHOLD_HIGH_RISK = 0.30  # Spoofed audio clearly below this
 
 # --- Face Detection ---
 FACE_CONFIDENCE_THRESHOLD = 0.4
