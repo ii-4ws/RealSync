@@ -317,7 +317,7 @@ function NewSessionModal({ open, onClose, onCreate }: {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const canSubmit = name.trim().length > 0 && !loading
+  const canSubmit = name.trim().length > 0 && url.trim().length > 0 && !loading
 
   const inputBase: React.CSSProperties = {
     width: '100%', boxSizing: 'border-box', border: 'none', outline: 'none',
@@ -416,7 +416,7 @@ function NewSessionModal({ open, onClose, onCreate }: {
               {/* Meeting URL */}
               <div>
                 <label style={{ ...LABEL_STYLE, display: 'block', marginBottom: 7 }}>
-                  Meeting URL <span style={{ color: $.t4, fontSize: 9, textTransform: 'none', letterSpacing: 0 }}>(optional)</span>
+                  Meeting URL <span style={{ color: $.red, fontSize: 9, textTransform: 'none', letterSpacing: 0 }}>*</span>
                 </label>
                 <input
                   value={url} onChange={(e) => setUrl(e.target.value)}
@@ -576,6 +576,20 @@ export default function Sessions() {
     }
 
     const result = await res.json() as { sessionId: string }
+
+    // Trigger bot to join the Zoom meeting
+    if (data.meetingUrl) {
+      const joinRes = await authFetch(`/api/sessions/${result.sessionId}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ meetingUrl: data.meetingUrl, displayName: 'RealSync Bot' }),
+      })
+      if (!joinRes.ok) {
+        const err = await joinRes.json().catch(() => ({ error: 'Bot failed to join' })) as { error?: string }
+        throw new Error(err.error ?? 'Bot failed to join meeting')
+      }
+    }
+
     handleStartSession(result.sessionId, data.title, data.type)
 
     // Refresh list
