@@ -1306,8 +1306,8 @@ function SecurityReport({
 export async function generateReportReactPdf(data: ReportInput): Promise<void> {
   // Fetch hi-res 1600x560 wordmark logo; fall back to 1024px square variant if unavailable
   const logoWhite =
-    (await fetchLogoAsDataUrl('/realsync-logo-hires.png')) ??
-    (await fetchLogoAsDataUrl('/realsync-logo-1024.png'))
+    (await fetchLogoAsDataUrl(`${import.meta.env.BASE_URL}realsync-logo-hires.png`)) ??
+    (await fetchLogoAsDataUrl(`${import.meta.env.BASE_URL}realsync-logo-1024.png`))
 
   const blob = await pdf(
     <SecurityReport data={data} logoWhite={logoWhite} />

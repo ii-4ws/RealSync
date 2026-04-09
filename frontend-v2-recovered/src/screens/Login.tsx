@@ -230,7 +230,7 @@ export default function Login() {
         style={{ position: 'relative', zIndex: 1, marginBottom: 16, textAlign: 'center' }}
       >
         <motion.img
-          src="/realsync-logo-white.png"
+          src={`${import.meta.env.BASE_URL}realsync-logo-white.png`}
           alt="RealSync"
           style={{ height: isMobile ? 60 : 80, width: 'auto' }}
           animate={{ scale: [1, 1.02, 1], opacity: [0.85, 1, 0.85] }}

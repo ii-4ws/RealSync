@@ -66,7 +66,7 @@ export default function Sidebar() {
             overflow: 'hidden',
           }}
         >
-          <img src="/realsync-eye-only.png" alt="RealSync" style={{ width: 42, height: 42, objectFit: 'contain' }} />
+          <img src={`${import.meta.env.BASE_URL}realsync-eye-only.png`} alt="RealSync" style={{ width: 42, height: 42, objectFit: 'contain' }} />
         </div>
 
         {/* Primary nav */}

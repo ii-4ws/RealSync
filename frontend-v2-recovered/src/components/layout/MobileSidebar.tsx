@@ -69,7 +69,7 @@ export default function MobileSidebar({ open, onClose }: MobileSidebarProps) {
               padding: '18px 16px 12px', borderBottom: `1px solid ${$.b1}`,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <img src="/realsync-eye-only.png" alt="RealSync" style={{ width: 32, height: 32, objectFit: 'contain' }} />
+                <img src={`${import.meta.env.BASE_URL}realsync-eye-only.png`} alt="RealSync" style={{ width: 32, height: 32, objectFit: 'contain' }} />
                 <span style={{ fontSize: 15, fontWeight: 700, color: $.t1, letterSpacing: '-0.2px' }}>RealSync</span>
               </div>
               <button
