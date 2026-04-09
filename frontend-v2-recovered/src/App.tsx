@@ -1,3 +1,4 @@
+import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import AppLayout from './components/layout/AppLayout'
 import Dashboard from './screens/Dashboard'
@@ -69,10 +70,32 @@ function AppWithSession() {
   )
 }
 
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() { return { hasError: true } }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: '100vh', background: '#0a0a0f', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontFamily: 'Inter, sans-serif', gap: 12 }}>
+          <div style={{ fontSize: 18, fontWeight: 600, color: '#e2e8f0' }}>Something went wrong</div>
+          <div style={{ fontSize: 13 }}>Please refresh the page to continue.</div>
+          <button onClick={() => window.location.reload()} style={{ marginTop: 8, padding: '8px 20px', borderRadius: 8, border: '1px solid rgba(34,211,238,0.3)', background: 'rgba(34,211,238,0.08)', color: '#22d3ee', fontSize: 13, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>Refresh</button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export default function App() {
   return (
-    <SessionProvider>
-      <AppWithSession />
-    </SessionProvider>
+    <ErrorBoundary>
+      <SessionProvider>
+        <AppWithSession />
+      </SessionProvider>
+    </ErrorBoundary>
   )
 }

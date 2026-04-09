@@ -5,6 +5,7 @@ import { Moon, Sun, Search, Menu, Clock, Settings, LogOut } from 'lucide-react'
 import $ from '../../lib/tokens'
 import { getTheme, setTheme, MONO_STYLE } from '../../lib/tokens'
 import { useSessionContext } from '../../contexts/SessionContext'
+import { useIsMobile } from '../../hooks/useIsMobile'
 
 interface HeaderProps {
   onCmdK: () => void
@@ -14,7 +15,7 @@ interface HeaderProps {
 export default function Header({ onCmdK, onHamburger }: HeaderProps) {
   const navigate = useNavigate()
   const location = useLocation()
-  const isMobile = window.innerWidth <= 768
+  const isMobile = useIsMobile()
   const [elapsed, setElapsed] = useState(0)
   const [theme, setThemeState] = useState<'dark' | 'light'>(getTheme)
   const [avatarOpen, setAvatarOpen] = useState(false)

@@ -12,9 +12,8 @@ interface CommandPaletteProps {
 const COMMANDS = [
   { icon: Clock, label: 'New Session', hint: 'N', action: (nav: (p: string) => void) => nav('/sessions') },
   { icon: FileText, label: 'View Reports', hint: 'R', action: (nav: (p: string) => void) => nav('/reports') },
-  { icon: Users, label: 'Manage Participants', hint: 'P', action: () => {} },
   { icon: Settings, label: 'Settings', hint: 'S', action: (nav: (p: string) => void) => nav('/settings') },
-  { icon: Shield, label: 'Security Audit', hint: 'A', action: () => {} },
+  { icon: Shield, label: 'Help & FAQ', hint: 'H', action: (nav: (p: string) => void) => nav('/faq') },
 ]
 
 export default function CommandPalette({ open, onClose }: CommandPaletteProps) {

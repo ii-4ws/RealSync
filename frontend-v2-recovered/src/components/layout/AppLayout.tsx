@@ -5,11 +5,12 @@ import Header from './Header'
 import MobileSidebar from './MobileSidebar'
 import CommandPalette from './CommandPalette'
 import $ from '../../lib/tokens'
+import { useIsMobile } from '../../hooks/useIsMobile'
 
 export default function AppLayout() {
   const [cmdOpen, setCmdOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const isMobile = window.innerWidth <= 768
+  const isMobile = useIsMobile()
   const closeMobile = useCallback(() => setMobileOpen(false), [])
 
   // Global Cmd+K listener
