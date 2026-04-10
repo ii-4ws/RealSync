@@ -212,7 +212,8 @@ export default function SignUp() {
       alignItems: 'center',
       justifyContent: 'center',
       position: 'relative',
-      overflow: 'hidden',
+      overflowX: 'hidden',
+      overflowY: 'auto',
       padding: isMobile ? '24px 16px' : '48px 24px',
     }}>
       {/* ── Animated orbs ── */}
