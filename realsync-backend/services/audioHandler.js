@@ -14,8 +14,8 @@ const RMS_SILENCE_THRESHOLD = parseInt(process.env.RMS_SILENCE_THRESHOLD, 10) ||
 // Audio EMA smoothing + extended hold: keep audio visible between analysis windows
 const _smoothedAudio = new Map(); // sessionId → { score: number, ts: number }
 const AUDIO_EMA_ALPHA = 0.3;
-const AUDIO_HOLD_S = 60;  // Hold score for 60s before decaying
-const AUDIO_DECAY_S = 30; // Decay to 0 over 30s after hold
+const AUDIO_HOLD_S = 15;  // Hold score for 15s before decaying
+const AUDIO_DECAY_S = 15; // Decay to 0 over 15s after hold
 
 /**
  * Returns an effective audio authenticity score with EMA smoothing and hold/decay.
@@ -138,6 +138,7 @@ function processAudioChunk(session, dataB64) {
     transcribeAudio({ sessionId: session.id, audioB64: combinedAudioB64, durationMs: 4000 })
       .then((res) => {
         if (res?.transcript?.text) {
+          log.info("audio", `Whisper transcript: "${res.transcript.text.slice(0, 80)}"`);
           handleTranscript(session, {
             text: res.transcript.text,
             isFinal: true,
@@ -147,7 +148,9 @@ function processAudioChunk(session, dataB64) {
           });
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        log.warn("audio", `Whisper error: ${err?.message ?? err}`);
+      });
   }
 }
 

@@ -291,11 +291,11 @@ def analyze_frame(session_id: str, frame_b64: str, captured_at: Optional[str] = 
                 session_id, clip_score, freq_score, boundary_score,
             )
 
-            # Adaptive: when frequency signal is weak (Zoom H.264 strips texture),
-            # boost CLIP weight from 50%→65% and reduce frequency from 30%→15%
+            # Adaptive: on 360p Recall.ai frames, CLIP is most reliable signal.
+            # Boost CLIP weight and minimize unreliable frequency signal.
             if freq_score < 0.55:
-                eff_clip_w = 0.65
-                eff_freq_w = 0.15
+                eff_clip_w = 0.75   # CLIP most reliable on 360p (was 0.65)
+                eff_freq_w = 0.05   # Freq unreliable on 360p (was 0.15)
                 eff_bnd_w = ENSEMBLE_WEIGHT_BOUNDARY
             else:
                 eff_clip_w = ENSEMBLE_WEIGHT_CLIP

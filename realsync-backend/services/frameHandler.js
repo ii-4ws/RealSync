@@ -88,7 +88,13 @@ async function handleFrame(session, message) {
       agg.deepfake = { ...agg.deepfake, authenticityScore: parseFloat(smoothed.toFixed(4)) };
     }
 
-    // Update session metrics from real AI response
+    // Update session metrics from real AI response.
+    // Preserve audio confidence — frame endpoint returns null for audio,
+    // but audioHandler sets it independently. Without this, every frame
+    // analysis resets audio to null → dashboard bounces 0→70→0.
+    const prevAudioConf = session.metrics?.confidenceLayers?.audio;
+    const prevAudioScore = session.audioAuthenticityScore;
+
     session.metrics = {
       ...agg,
       timestamp: result.processedAt || makeIso(),
@@ -96,6 +102,12 @@ async function handleFrame(session, message) {
       analyzedParticipant: primaryName,
     };
     session.source = "external";
+
+    // Restore audio confidence from audioHandler
+    if (prevAudioConf != null) {
+      session.metrics.confidenceLayers = session.metrics.confidenceLayers || {};
+      session.metrics.confidenceLayers.audio = prevAudioConf;
+    }
 
     // H7: Broadcast moved AFTER trust recomputation (below) so clients get audio-corrected trust
 

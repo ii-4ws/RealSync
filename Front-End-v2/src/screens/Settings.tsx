@@ -8,6 +8,7 @@ import { useSessionContext } from '../contexts/SessionContext'
 import { supabase } from '../lib/supabaseClient'
 import { authFetch } from '../lib/api'
 import { useIsMobile } from '../hooks/useIsMobile'
+import { useNotifications } from '../contexts/NotificationContext'
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
 
@@ -432,13 +433,11 @@ function DetectionTab() {
 // ─── Tab: Notifications ───────────────────────────────────────────────────────
 
 function NotificationsTab() {
-  const [desktop, setDesktop] = useState(() => {
-    const saved = localStorage.getItem('rs_notif_desktop')
-    return saved !== null ? saved === 'true' : true
-  })
+  const { requestDesktopPermission, desktopEnabled, setDesktopEnabled } = useNotifications()
+  const [desktop, setDesktop] = useState(desktopEnabled)
   const [sound, setSound] = useState(() => {
-    const saved = localStorage.getItem('rs_notif_sound')
-    return saved !== null ? saved === 'true' : true
+    const saved = localStorage.getItem('realsync-alert-sound-enabled')
+    return saved !== null ? saved !== 'false' : true
   })
   const [email, setEmail] = useState(() => {
     const saved = localStorage.getItem('rs_notif_email')
@@ -453,12 +452,19 @@ function NotificationsTab() {
     }
   })
 
+  const handleDesktopToggle = async (enabled: boolean) => {
+    setDesktop(enabled)
+    setDesktopEnabled(enabled)
+    if (enabled) {
+      await requestDesktopPermission()
+    }
+  }
+
   useEffect(() => {
-    localStorage.setItem('rs_notif_desktop', String(desktop))
-    localStorage.setItem('rs_notif_sound', String(sound))
+    localStorage.setItem('realsync-alert-sound-enabled', String(sound))
     localStorage.setItem('rs_notif_email', String(email))
     localStorage.setItem('rs_notif_levels', JSON.stringify(levels))
-  }, [desktop, sound, email, levels])
+  }, [sound, email, levels])
 
   const LEVEL_OPTS = [
     { key: 'critical', label: 'Critical', color: $.red, bg: 'rgba(239,68,68,0.08)' },
@@ -472,7 +478,7 @@ function NotificationsTab() {
       <SettingsCard delay={0.05}>
         <SectionHeader title="Alert Channels" subtitle="Choose how you receive real-time detection alerts" />
         <div>
-          <ToggleRow label="Desktop Notifications" description="Push alerts directly to your OS notification center" on={desktop} onChange={setDesktop} delay={0.1} />
+          <ToggleRow label="Desktop Notifications" description="Push alerts directly to your OS notification center" on={desktop} onChange={handleDesktopToggle} delay={0.1} />
           <ToggleRow label="Sound Alerts" description="Play an audio cue when a new alert is triggered" on={sound} onChange={setSound} delay={0.15} />
           <ToggleRow label="Email Reports" description="Receive a post-session summary report to your inbox" on={email} onChange={setEmail} delay={0.2} />
         </div>

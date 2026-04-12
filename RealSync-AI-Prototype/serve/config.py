@@ -29,15 +29,15 @@ FACE_PADDING_PERCENT = 0.3
 FACE_CROP_SIZE = 224
 
 # --- Deepfake Thresholds ---
-DEEPFAKE_AUTH_THRESHOLD_LOW_RISK = 0.60
+DEEPFAKE_AUTH_THRESHOLD_LOW_RISK = 0.50   # Recalibrated for 360p Recall.ai frames (was 0.60 for 1080p)
 DEEPFAKE_AUTH_THRESHOLD_HIGH_RISK = 0.40
 
 # --- SPRT (Sequential Probability Ratio Test) ---
 SPRT_ALPHA = 0.05              # Max false positive rate (flag real as fake)
 SPRT_BETA = 0.05               # Max false negative rate (miss a real fake)
-SPRT_REAL_MEAN = 0.70          # Real faces score high on CLIP: ~0.65-0.90
-SPRT_FAKE_MEAN = 0.35          # Deepfake faces score low: ~0.20-0.45
-SPRT_SCORE_STD = 0.14          # Wider std to account for Zoom compression variance
+SPRT_REAL_MEAN = 0.65          # Recalibrated for 360p: real faces ~0.50-0.82 (was 0.70 for 1080p)
+SPRT_FAKE_MEAN = 0.32          # Recalibrated for 360p: deepfakes ~0.22-0.41 (was 0.35 for 1080p)
+SPRT_SCORE_STD = 0.12          # Tighter std for 360p distribution (was 0.14)
 
 # --- Session ---
 SESSION_TTL_SECONDS = 3600

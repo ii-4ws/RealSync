@@ -12,10 +12,17 @@
  */
 
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const log = require("../lib/logger");
 const { registerAdapter, unregisterAdapter } = require("../ws/recallWs");
 
 const DEFAULT_DISPLAY_NAME = "RealSync Bot";
+
+// Bot avatar — shown as the bot's camera tile in Zoom
+const AVATAR_B64_PATH = path.join(__dirname, "realsync-bot-avatar-b64.txt");
+let BOT_AVATAR_B64 = null;
+try { BOT_AVATAR_B64 = fs.readFileSync(AVATAR_B64_PATH, "utf-8").trim(); } catch { /* no avatar */ }
 const STATUS_POLL_MS = 3000;
 const STATUS_POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 min max polling
 
@@ -70,6 +77,11 @@ class RecallBotAdapter {
     const body = {
       meeting_url: this.meetingUrl,
       bot_name: this.displayName,
+      ...(BOT_AVATAR_B64 && {
+        automatic_video_output: {
+          in_call_recording: { kind: "jpeg", b64_data: BOT_AVATAR_B64 },
+        },
+      }),
       recording_config: {
         video_separate_png: {},
         audio_separate_raw: {},
