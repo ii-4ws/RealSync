@@ -1,8 +1,8 @@
 # RealSync
 
-Real-time deepfake detection for Zoom meetings.
+Real-time deepfake detection for video meetings.
 
-**Team:** Ahmed Sarhan, Mohammed Atwani, Mohamed Ghazi, Yousef Kanjo, Aws Diab  
+**Team:** Mohammed Atwani, Ahmed Sarhan,Mohamed Ghazi, Yousef Kanjo, Aws Diab  
 **Supervisor:** Dr. May El Barachi  
 **Course:** CSIT321 — Graduation Project, University of Wollongong in Dubai
 
@@ -10,11 +10,11 @@ Real-time deepfake detection for Zoom meetings.
 
 ## What is RealSync
 
-RealSync monitors live Zoom meetings for synthetic media — face swaps, voice cloning, and AI-generated video. It works by joining a meeting as a silent bot (powered by Puppeteer), capturing frames, audio, and live captions, then routing everything through a multi-modal AI pipeline that runs in real time.
+RealSync monitors live video meetings for synthetic media — face swaps, voice cloning, and social engineering. A meeting bot created via Recall.ai's API joins the call as a native participant, captures per-participant video frames and audio in real time, and streams them through a multi-modal AI pipeline. The system supports Zoom, Google Meet, and Microsoft Teams.
 
-The analysis happens across three independent detection layers. Video is processed by a CLIP ViT-L/14 ensemble that looks for face manipulation artifacts and frame-level inconsistencies. Audio is analyzed by a WavLM-based classifier trained to distinguish natural speech from synthesized or cloned voices. Transcripts are processed by a DeBERTa NLI model that flags language patterns inconsistent with the speaker's established profile.
+Detection runs across three layers. Video is processed by a CLIP ViT-L/14 ensemble (semantic detection + frequency-domain analysis + boundary texture analysis) that catches both raw and post-processed face swaps. Audio is analyzed by a WavLM-based classifier trained to distinguish natural speech from synthesized or cloned voices. Transcripts are processed by a DeBERTa NLI model that flags social engineering patterns like credential requests, urgency pressure, and authority impersonation.
 
-Results from all three layers feed into a Sequential Probability Ratio Test (SPRT), which accumulates evidence over time before committing to a session-level decision. This reduces false positives that would trigger from a single anomalous frame or audio artifact. The meeting host sees a live trust score, per-layer confidence indicators, and an alert feed in the dashboard — all updating over WebSocket with sub-second latency.
+Results from all three layers feed into a Sequential Probability Ratio Test (SPRT), which accumulates evidence over time before committing to a session-level decision at 95% confidence. Real faces converge to REAL in 5-8 frames. Raw face swaps converge to FAKE in 2-3 frames. The meeting host sees a live trust score, per-layer confidence indicators, and an alert feed on the dashboard — all updating over WebSocket with sub-second latency.
 
 ---
 
@@ -25,16 +25,23 @@ Results from all three layers feed into a Sequential Probability Ratio Test (SPR
 │  Frontend           │◄──────────────────►│  Backend             │◄──────────────────►│  AI Service          │
 │  React + TypeScript │  subscribe/ingest  │  Node.js + Express   │  /api/analyze/*    │  Python + FastAPI    │
 │  :3000              │                    │  :4000               │                    │  :5100               │
-│  real-sync.app      │                    │  api.real-sync.app   │                    │  RunPod GPU          │
+│  Cloudflare Pages   │                    │  Oracle Cloud VPS    │                    │  RunPod GPU          │
+│  real-sync.app      │                    │  api.real-sync.app   │                    │  RTX 4000 Ada        │
 └─────────────────────┘                    └──────────┬───────────┘                    └──────────────────────┘
                                                       │
-                                           ┌──────────▼───────────┐
-                                           │  Supabase            │
-                                           │  PostgreSQL + Auth    │
-                                           └──────────────────────┘
+                                            ┌─────────▼──────────┐
+                                            │  Recall.ai API     │
+                                            │  Meeting bot       │
+                                            │  (Zoom/Meet/Teams) │
+                                            └────────────────────┘
+                                                      │
+                                            ┌─────────▼──────────┐
+                                            │  Supabase          │
+                                            │  PostgreSQL + Auth │
+                                            └────────────────────┘
 ```
 
-**Data flow:** The Zoom bot captures video frames and audio from the meeting. The backend streams them to the AI service for analysis, fuses the returned scores into a unified trust signal, and broadcasts it to the frontend dashboard in real time.
+**Data flow:** The Recall.ai bot joins the meeting as a native SDK participant. It streams per-participant video frames (PNG, 640x360, ~2 fps) and audio (PCM16 mono 16kHz) over WebSocket to the backend. The backend forwards data to the AI service for analysis, fuses the returned scores into a unified trust signal, and broadcasts it to the frontend dashboard in real time.
 
 ---
 
@@ -49,13 +56,13 @@ Results from all three layers feed into a Sequential Probability Ratio Test (SPR
 ### Frontend
 
 ```bash
-cd Front-End
+cd Front-End-v2
 npm install
 cp .env.example .env   # then fill in values below
 npm run dev            # http://localhost:3000
 ```
 
-`Front-End/.env` values:
+`Front-End-v2/.env` values:
 
 ```
 VITE_API_BASE_URL=http://localhost:4000
@@ -81,13 +88,18 @@ node index.js          # http://localhost:4000
 ```
 PORT=4000
 AI_SERVICE_URL=http://localhost:5100
+AI_API_KEY=<your-ai-service-api-key>
 SUPABASE_URL=<your-supabase-project-url>
 SUPABASE_SERVICE_KEY=<your-supabase-service-role-key>
-BOT_HEADLESS=true
+ALLOWED_ORIGIN=http://localhost:3000
+BOT_ADAPTER=recall
+RECALL_API_KEY=<your-recall-api-key>
+RECALL_REGION=ap-northeast-1
+RECALL_WS_BASE_URL=wss://your-domain.com
 LOG_LEVEL=info
 ```
 
-Set `BOT_HEADLESS=false` to open a visible browser window when the bot joins a meeting — helpful for debugging bot behavior.
+Set `BOT_ADAPTER=puppeteer` to fall back to the legacy Puppeteer bot (preserved on the `puppeteer-backup` branch).
 
 ### AI service
 
@@ -96,17 +108,21 @@ cd RealSync-AI-Prototype
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python -m serve.app         # http://localhost:5100
+AI_API_KEY=<your-key> python -m serve.app   # http://localhost:5100
 ```
 
-Models are downloaded automatically on first run:
+Models loaded at startup:
 
-| Model | Size | Source |
-|-------|------|--------|
-| CLIP ViT-L/14 | ~80 MB | HuggingFace |
-| MediaPipe face detection | ~224 KB | Bundled |
-| Emotion classifier weights | 31 MB | Included in repo |
-| WavLM audio weights | 361 MB | Included in repo |
+| Model | Size | Purpose |
+|-------|------|---------|
+| CLIP ViT-L/14 (GenD) | ~1.8 GB | Face-swap deepfake detection |
+| MediaPipe face detection | ~224 KB | Face localization and cropping |
+| Emotion classifier (EfficientNet-B2) | 31 MB | Six-class emotion recognition |
+| WavLM audio classifier | 361 MB | Voice authenticity scoring |
+| Whisper (base) | ~140 MB | Audio transcription |
+| DeBERTa-v3-base | ~440 MB | Social engineering / phishing detection |
+| Frequency analyzer | — | DCT high-frequency analysis (no model weights) |
+| Boundary analyzer | — | Face boundary texture analysis (no model weights) |
 
 ### Start everything at once
 
@@ -123,17 +139,17 @@ This starts all three services in sequence. Press `Ctrl+C` to stop them all.
 
 1. **Sign up or log in** at [real-sync.app](https://real-sync.app). Sign-up requires a corporate or institutional email — personal addresses (Gmail, Yahoo, etc.) are blocked by policy.
 
-2. **Create a session.** Give it a title and paste the Zoom meeting URL. RealSync will use the URL to join the meeting as a bot.
+2. **Create a session.** Give it a title and paste the meeting URL (Zoom, Google Meet, or Microsoft Teams). Select the meeting type.
 
-3. **Click "Join".** The bot joins your Zoom meeting as a silent participant. It takes about 10–15 seconds to connect and begin streaming.
+3. **Click "Join".** The Recall.ai bot joins the meeting as a native participant named "RealSync Bot" with a branded camera tile. It takes about 15-30 seconds to connect and begin streaming.
 
-4. **Open the dashboard.** You'll see the real-time trust score, per-layer confidence bars (video / audio / text), an emotion analysis panel, and the live alert feed. Everything updates automatically — no manual refresh.
+4. **Open the dashboard.** You'll see the real-time trust score, per-layer confidence bars (Visual / Audio / Emotion), a deepfake risk indicator, and the live alert feed. Everything updates automatically over WebSocket.
 
-5. **Respond to alerts.** If an alert fires, it appears in the alert panel with a severity level (low / medium / high / critical) and a plain-language description of what triggered it. You can dismiss or escalate from there.
+5. **Respond to alerts.** If an alert fires, it appears in the alert panel with a severity level (low / medium / high / critical) and a description of what triggered it. Desktop notifications and sound alerts are available via the Settings page.
 
-6. **End the session.** Click "Stop" when the meeting is over. RealSync waits for any in-flight analysis to complete, then generates a session report.
+6. **End the session.** Click "Stop" when the meeting is over. The bot leaves the call and the system finalizes the session data.
 
-7. **Review the report.** Go to the Reports screen to see a summary of the session — overall verdict, timeline of alerts, per-layer evidence breakdown — and export it as a PDF.
+7. **Review the report.** Go to the Reports screen to see a summary — overall verdict, timeline of alerts, per-layer evidence breakdown — and export as PDF, CSV, or JSON.
 
 ---
 
@@ -144,22 +160,26 @@ This starts all three services in sequence. Press `Ctrl+C` to stop them all.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/sessions` | Create a new session |
-| `POST` | `/api/sessions/:id/join` | Bot joins the meeting |
+| `POST` | `/api/sessions/:id/join` | Bot joins the meeting via Recall.ai |
 | `POST` | `/api/sessions/:id/stop` | Stop the bot and finalize session |
 | `GET` | `/api/sessions/:id/metrics` | Current analysis metrics |
 | `GET` | `/api/sessions/:id/alerts` | Alert history for a session |
 | `GET` | `/api/health` | Service health check |
 
+WebSocket endpoints:
+- `/ws` — Dashboard subscribe (frontend → backend)
+- `/ws/ingest` — Bot data stream (bot → backend)
+- `/ws/recall` — Recall.ai event stream (Recall.ai → backend)
+
 ### AI service — `http://localhost:5100`
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/analyze/frame` | Analyze a single video frame (base64 JPEG) |
-| `POST` | `/api/analyze/audio` | Analyze an audio chunk (base64 WAV) |
+| `POST` | `/api/analyze/frame` | Analyze a single video frame (base64 PNG/JPEG) |
+| `POST` | `/api/analyze/audio` | Analyze an audio chunk (base64 PCM16) |
 | `POST` | `/api/analyze/text` | Analyze a transcript segment |
+| `POST` | `/api/transcribe` | Transcribe audio via Whisper |
 | `GET` | `/api/health` | Service health check |
-
-Full request/response schemas are in [`contracts/`](contracts/).
 
 ---
 
@@ -176,6 +196,8 @@ cd realsync-backend
 npm test
 ```
 
+34+ test cases across both suites covering inference pipeline, alert fusion, session management, and endpoint validation.
+
 The manual end-to-end test plan is at [`docs/MANUAL_E2E_TEST_PLAN.md`](docs/MANUAL_E2E_TEST_PLAN.md).
 
 ---
@@ -185,11 +207,12 @@ The manual end-to-end test plan is at [`docs/MANUAL_E2E_TEST_PLAN.md`](docs/MANU
 | Layer | Technology |
 |-------|-----------|
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, Recharts |
-| Backend | Node.js, Express 5, WebSocket (ws), Puppeteer |
-| AI service | Python 3.10, FastAPI, PyTorch, CLIP ViT-L/14, MediaPipe, WavLM, DeBERTa |
-| Database | Supabase (PostgreSQL) |
-| Auth | Supabase Auth (JWT + MFA) |
-| Deployment | Cloudflare Pages, Oracle Cloud VPS, RunPod |
+| Backend | Node.js, Express 5, WebSocket (ws), PM2 |
+| Meeting bot | Recall.ai API (primary), Puppeteer (legacy, on `puppeteer-backup` branch) |
+| AI service | Python 3.10, FastAPI, PyTorch, CLIP ViT-L/14, MediaPipe, WavLM, DeBERTa, Whisper |
+| Database | Supabase (PostgreSQL with Row-Level Security) |
+| Auth | Supabase Auth (JWT + OAuth + MFA) |
+| Deployment | Cloudflare Pages (frontend), Oracle Cloud VPS via Cloudflare Tunnel (backend), RunPod GPU (AI) |
 
 ---
 
@@ -197,39 +220,67 @@ The manual end-to-end test plan is at [`docs/MANUAL_E2E_TEST_PLAN.md`](docs/MANU
 
 ```
 RealSync/
-├── Front-End/                      # React dashboard (TypeScript + Vite)
+├── Front-End-v2/                   # React dashboard (TypeScript + Vite)
 │   └── src/
-│       ├── components/
-│       │   ├── screens/            # Page components (Dashboard, Reports, Settings, etc.)
-│       │   ├── layout/             # Sidebar, TopBar, NotificationBell
-│       │   ├── dashboard/          # Dashboard sub-components
-│       │   └── ui/                 # shadcn/ui primitives
-│       ├── contexts/               # React contexts (WebSocket, Notifications, Theme)
+│       ├── screens/                # Page components (Dashboard, Reports, Settings, etc.)
+│       ├── components/             # Layout, dashboard sub-components, UI primitives
+│       ├── contexts/               # React contexts (WebSocket, Notifications, Session)
 │       └── lib/                    # API client, utilities
-├── realsync-backend/               # Node.js API server + Zoom bot
+├── realsync-backend/               # Node.js API server + bot management
 │   ├── index.js                    # Express + WebSocket entry point
 │   ├── bot/
-│   │   ├── ZoomBotAdapter.js       # Puppeteer-based Zoom bot
-│   │   └── botManager.js           # Bot lifecycle management
-│   └── lib/                        # Auth, persistence, AI client, fraud detection
+│   │   ├── RecallBotAdapter.js     # Recall.ai meeting bot adapter (~280 lines)
+│   │   ├── ZoomBotAdapter.js       # Legacy Puppeteer bot (2,072 lines, backup)
+│   │   └── botManager.js           # Bot lifecycle + BOT_ADAPTER switch
+│   ├── ws/
+│   │   ├── subscribe.js            # Frontend WebSocket (dashboard updates)
+│   │   ├── ingest.js               # Bot data ingestion
+│   │   └── recallWs.js             # Recall.ai WebSocket receiver
+│   ├── services/                   # Frame, audio, transcript handlers
+│   └── lib/                        # Auth, persistence, AI client, alert fusion
 ├── RealSync-AI-Prototype/          # Python AI inference service
 │   ├── serve/
 │   │   ├── app.py                  # FastAPI entry point
 │   │   ├── inference.py            # Multi-modal analysis pipeline
-│   │   ├── clip_deepfake_model.py   # CLIP ViT-L/14 deepfake detector
+│   │   ├── clip_deepfake_model.py  # CLIP ViT-L/14 deepfake detector
+│   │   ├── frequency_analyzer.py   # DCT frequency-domain analysis
+│   │   ├── boundary_analyzer.py    # Face boundary texture analysis
 │   │   ├── emotion_model.py        # EfficientNet-B2 emotion classifier
 │   │   ├── audio_model.py          # WavLM audio deepfake detector
-│   │   ├── frequency_analyzer.py   # DCT frequency analysis
-│   │   ├── boundary_analyzer.py    # Face boundary texture analysis
-│   │   ├── temporal_analyzer.py    # EWMA temporal smoothing
-│   │   ├── sprt_detector.py        # SPRT session-level decision
-│   │   └── text_analyzer.py        # DeBERTa NLI transcript analysis
+│   │   ├── whisper_model.py        # Whisper transcription
+│   │   ├── text_analyzer.py        # DeBERTa NLI social engineering detection
+│   │   ├── sprt_detector.py        # Sequential Probability Ratio Test
+│   │   ├── temporal_analyzer.py    # EWMA smoothing + anomaly detection
+│   │   └── config.py               # All thresholds and hyperparameters
 │   └── tests/
-├── contracts/                      # API schema definitions (JSON Schema)
 ├── docs/                           # Technical documentation
 ├── start.sh                        # Start all three services
-└── tasks/                          # Sprint planning and task tracking
+└── HANDOFF-RECALL.md               # Recall.ai integration handoff
 ```
+
+---
+
+## Deployment
+
+### Frontend — Cloudflare Pages
+- Domain: real-sync.app
+- Build: `npm run build` → `dist/`
+- HTTPS and CDN via Cloudflare
+
+### Backend — Oracle Cloud VPS
+- Always Free ARM instance (4 OCPU, 24 GB RAM)
+- Accessible at api.real-sync.app via Cloudflare Tunnel
+- Managed by PM2 with automatic restart on crash
+
+### AI Service — RunPod GPU
+- RTX 4000 Ada (20 GB VRAM), $0.20/hr on-demand
+- All 6 ML models loaded at startup
+- Accessible via RunPod proxy URL or direct SSH
+
+### Meeting Bot — Recall.ai
+- API-managed bot, $0.50/hr per session
+- Native SDK integration (not browser-based)
+- Supports Zoom, Google Meet, Microsoft Teams
 
 ---
 
@@ -239,7 +290,7 @@ RealSync/
 - [AI models report](docs/AI_MODELS_REPORT.md)
 - [Technical specification](docs/FINAL_RELEASE_TECH_SPEC.md)
 - [Manual E2E test plan](docs/MANUAL_E2E_TEST_PLAN.md)
-- [API contracts](contracts/)
+- [Recall.ai integration handoff](HANDOFF-RECALL.md)
 
 ---
 
