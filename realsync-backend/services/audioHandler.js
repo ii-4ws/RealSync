@@ -1,6 +1,6 @@
 const { analyzeAudio, transcribeAudio } = require("../lib/aiClient");
 const { createSttStream } = require("../lib/gcpStt");
-const { broadcastToSession, makeIso } = require("./sessionManager");
+const { broadcastToSession, makeIso, sessions } = require("./sessionManager");
 const { handleTranscript } = require("./transcriptHandler");
 const log = require("../lib/logger");
 
@@ -45,6 +45,74 @@ function getEffectiveAudioScore(sessionId, currentScore) {
 }
 
 /**
+ * Recompute session.metrics.trustScore from the currently stored signals.
+ * Handles camera-off and audio-only cases so trust isn't frozen at 0 when
+ * there is no video signal.
+ */
+function recomputeTrustScore(session) {
+  if (!session.metrics) return;
+  const cameraOff = session.metrics.cameraOff === true;
+  const audio = session.metrics.confidenceLayers?.audio;
+  const video = session.metrics.deepfake?.authenticityScore
+    ?? session.metrics.confidenceLayers?.video;
+  const behavior = session.metrics.confidenceLayers?.behavior;
+
+  let trust = null;
+  if (cameraOff || video == null) {
+    if (audio != null) trust = audio;
+  } else if (audio != null && session.audioHasSignal !== false) {
+    trust = 0.45 * video + 0.35 * audio + 0.20 * (behavior ?? 0.55);
+  } else {
+    trust = 0.55 * video + 0.45 * (behavior ?? 0.55);
+  }
+  if (trust == null) return;
+  session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(trust.toFixed(4))));
+}
+
+/**
+ * Apply a new effective audio score (possibly 0 on silence/decay) to the
+ * session, recompute trust, and broadcast. Used by both the live analysis
+ * path and the standalone decay ticker.
+ */
+function applyAudioScore(session, rawScore) {
+  const effective = getEffectiveAudioScore(session.id, rawScore);
+  session.audioAuthenticityScore = effective;
+  if (!session.metrics) return effective;
+  session.metrics.confidenceLayers = session.metrics.confidenceLayers || {};
+  session.metrics.confidenceLayers.audio = effective;
+  recomputeTrustScore(session);
+  session.metrics.timestamp = makeIso();
+  broadcastToSession(session.id, { type: "metrics", data: session.metrics });
+  return effective;
+}
+
+/**
+ * Global tick that fades the audio score to 0 for any session that stopped
+ * receiving chunks (e.g. participant muted their mic). Without this, the
+ * score is frozen at the last speech value forever, because Recall.ai sends
+ * no audio at all while muted so processAudioChunk is never called.
+ */
+const AUDIO_DECAY_TICK_MS = 3_000;
+const AUDIO_CHUNK_STALE_MS = 3_000;
+let _decayTickerStarted = false;
+function startAudioDecayTicker() {
+  if (_decayTickerStarted) return;
+  _decayTickerStarted = true;
+  setInterval(() => {
+    const now = Date.now();
+    for (const session of sessions.values()) {
+      if (session.endedAt) continue;
+      const last = session.lastAudioChunkAt || 0;
+      if (now - last < AUDIO_CHUNK_STALE_MS) continue;
+      if (!_smoothedAudio.has(session.id)) continue;
+      session.audioHasSignal = false;
+      applyAudioScore(session, 0);
+    }
+  }, AUDIO_DECAY_TICK_MS).unref();
+}
+startAudioDecayTicker();
+
+/**
  * Combine base64 audio chunks into a single base64 string.
  */
 function combineAudioChunks(chunks) {
@@ -57,6 +125,7 @@ function combineAudioChunks(chunks) {
  *  - accumulates it for periodic AI deepfake + Whisper analysis
  */
 function processAudioChunk(session, dataB64) {
+  session.lastAudioChunkAt = Date.now();
   if (!session.stt) {
     session.stt = createSttStream({
       onTranscript: (t) => handleTranscript(session, t),
@@ -96,18 +165,8 @@ function processAudioChunk(session, dataB64) {
     rmsEnergy = Math.sqrt(rmsEnergy / (pcmBuf.length / 2));
 
     if (rmsEnergy < RMS_SILENCE_THRESHOLD) {
-      // Silence detected — skip AI analysis to avoid false "spoofed" flags.
-      // Still tick the hold/decay clock so the stored score fades to 0 over time
-      // instead of freezing at the last speech value.
       session.audioHasSignal = false;
-      const decayed = getEffectiveAudioScore(session.id, 0);
-      session.audioAuthenticityScore = decayed;
-      if (session.metrics) {
-        session.metrics.confidenceLayers = session.metrics.confidenceLayers || {};
-        session.metrics.confidenceLayers.audio = decayed;
-        session.metrics.timestamp = new Date().toISOString();
-        broadcastToSession(session.id, { type: "metrics", data: session.metrics });
-      }
+      applyAudioScore(session, 0);
       log.info("audio", `Chunk skipped: RMS ${rmsEnergy.toFixed(0)} below threshold`);
       return;
     }
@@ -119,24 +178,7 @@ function processAudioChunk(session, dataB64) {
       .then((res) => {
         session.audioAnalysisInFlight = false;
         if (res?.audio?.authenticityScore != null) {
-          const effectiveAudioScore = getEffectiveAudioScore(session.id, res.audio.authenticityScore);
-          session.audioAuthenticityScore = effectiveAudioScore;
-          if (session.metrics) {
-            session.metrics.confidenceLayers = session.metrics.confidenceLayers || {};
-            session.metrics.confidenceLayers.audio = effectiveAudioScore;
-          }
-          // Fix 2: Recompute trust and broadcast so frontend sees audio updates
-          // C5 fix: Use raw deepfake authenticityScore (not composite trustScore) to avoid double-counting
-          if (session.metrics?.trustScore != null) {
-            const behaviorConf = session.metrics.confidenceLayers?.behavior || 0.55;
-            const videoSignal = session.metrics.deepfake?.authenticityScore
-              ?? session.metrics.confidenceLayers?.video ?? 0.5;
-            const audioScore = effectiveAudioScore;
-            const finalTrust = 0.45 * videoSignal + 0.35 * audioScore + 0.20 * behaviorConf;
-            session.metrics.trustScore = Math.max(0, Math.min(1, parseFloat(finalTrust.toFixed(4))));
-          }
-          session.metrics.timestamp = makeIso();
-          broadcastToSession(session.id, { type: "metrics", data: session.metrics });
+          applyAudioScore(session, res.audio.authenticityScore);
         }
       })
       .catch((err) => {
